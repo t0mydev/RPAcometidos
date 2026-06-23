@@ -314,6 +314,18 @@ files = [
 et-xmlfile = "*"
 
 [[package]]
+name = "pathlib"
+version = "1.0.1"
+description = "Object-oriented filesystem paths"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "pathlib-1.0.1-py3-none-any.whl", hash = "sha256:f35f95ab8b0f59e6d354090350b44a80a80635d22efdedfa84c7ad1cf0a74147"},
+    {file = "pathlib-1.0.1.tar.gz", hash = "sha256:6940718dfc3eff4258203ad5021090933e5c04707d5ca8cc9e73c94a7894ea9f"},
+]
+
+[[package]]
 name = "playwright"
 version = "1.60.0"
 description = "A high-level API to automate web browsers"
@@ -401,4 +413,4 @@ watchdog = ["watchdog (>=2.3)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.14"
-content-hash = "dcc60e43d46bdfa30720b1117c921da454c3f3676ec0512c57f87de7c8cdbc3d"
+content-hash = "68dbfbf53fa6f498448580e074f9c5d27b527a270b0df5129bd4068c5537d532"

@@ -2,6 +2,8 @@
 
 Este repositorio contiene el código fuente del sistema RPA Cometidos. La arquitectura del software está dividida en dos entornos principales que convergen en producción: un backend gestionado con Python/Flask y un frontend interactivo construido con Vue/Vite.
 
+---
+
 ## Tecnologías Clave (Guía para el Equipo)
 
 Antes de iniciar, es importante comprender dos herramientas no mencionadas anteriormente que orquestan este proyecto:
@@ -17,6 +19,8 @@ No necesitan modificar archivos HTML ni recargar la página web. Solo deben prog
 * 📖 **Documentación de Vite:** [vitejs.dev/guide](https://vitejs.dev/guide/)
 * 📖 **Documentación de Vue 3:** [vuejs.org/guide](https://vuejs.org/guide/introduction.html)
 
+---
+
 ## Requisitos Previos
 
 Para colaborar en este proyecto, debes tener instaladas las siguientes herramientas en tu sistema operativo:
@@ -28,7 +32,7 @@ Para colaborar en este proyecto, debes tener instaladas las siguientes herramien
 
 ## Instrucciones de Instalación Local
 
-Una vez realizado el `git clone` del repositorio en tu máquina local, debes inicializar ambos entornos de forma independiente.
+Una vez realizado el `git clone` del repositorio en tu máquina local, debes inicializar ambos entornos de forma independiente. Cada vez que se haga un nuevo merge a la rama principal desde un pull request de rama feature, y actualices tu clone a los nuevos cambios (usando git fetch y merge) se recomienda hacer nuevamente estos pasos.
 
 ### 1. Entorno Backend (Python / Flask)
 En la raíz del proyecto (`RPAcometidos/`), abre tu terminal y ejecuta el siguiente comando para leer el archivo `pyproject.toml` y descargar las librerías de Python:
@@ -43,6 +47,8 @@ Navega hacia la carpeta del frontend y ejecuta la descarga de dependencias de Ja
 cd frontend //Si es que estás en la raíz
 npm install
 ```
+
+---
 
 ## Flujo de Trabajo en Desarrollo
 
@@ -64,6 +70,12 @@ npm run dev
 ```
 (Vite operará en http://localhost:5173, reflejando cualquier cambio de código frontend en tiempo real)
 
+---
+
+
+
+---
+
 ## Compilación para Producción (Monolito)
 
 El código fuente de Vue, que está en la carpeta `frontend/` es exclusivo para desarrollo. Cuando se termina de programar la interfaz visual y se necesita integrar al servidor Flask definitivo, se debe compilar solamente.
@@ -74,6 +86,8 @@ npm run build
 ```
 > **IMPORTANTE**
 Esto generará los archivos en versión estática dentro de la carpeta `RPAcometidos/src/rpacometidos/vue` esto se hace si se quiere comprobar que los archivos se generan correctamente sin errores, se recomienda que mientras están desarrollando esta carpeta no exista, osea que si la generan, la borren, y si quieren interactuar con el frontend o revisar como se ve se haga a través de lo explicado en el punto _Terminal 2 (Frontend - Interfaz de Usuario)_ cuando se levanta flask, flask renderiza el index.html que queda adentro de esa carpeta, son asíncronos hasta el momento que se va a producción, flask siempre va a renderizar algo diferente a vue hasta este.
+
+---
 
 ## Arquitectura de Compilación:
 Este comando procesará todo el código interactivo, lo minificará y depositará los archivos estáticos resultantes de forma automática en el directorio src/rpacometidos/Vue/.

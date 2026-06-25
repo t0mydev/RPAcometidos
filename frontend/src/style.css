@@ -1,0 +1,112 @@
+@import url('https://fonts.googleapis.com/css2?family=Roboto+Slab:wght@400;500&family=Roboto:wght@300;400;700&display=swap');
+
+:root {
+  /* UI Kit Colors */
+  --color-primary: #006FB3;
+  --color-secondary: #FE6565;
+  --color-tertiary: #0A132D;
+  --color-accent: #A8B7C7;
+  --color-neutral: #EEEEEE;
+  --color-dark-gray: #4A4A4A;
+  --color-mid-gray: #8A8A8A;
+  --color-black: #111111;
+  --color-white: #FFFFFF;
+  
+  /* Typography */
+  --font-body: 'Roboto', sans-serif;
+  --font-title: 'Roboto Slab', serif;
+}
+
+body {
+  font-family: var(--font-body);
+  color: var(--color-black);
+  background-color: var(--color-white);
+  margin: 0;
+  padding: 0;
+}
+
+h1, h2, h3, h4, h5, h6, .title-font {
+  font-family: var(--font-title);
+}
+
+h1 { font-size: 32px; font-weight: 500; }
+h2 { font-size: 24px; font-weight: 500; }
+h3 { font-size: 20px; font-weight: 500; }
+p { font-size: 16px; }
+label { font-size: 13px; font-weight: 400; color: var(--color-dark-gray); }
+.caption { font-size: 11px; color: var(--color-mid-gray); }
+
+/* Override Bootstrap Colors */
+.text-primary { color: var(--color-primary) !important; }
+.bg-primary { background-color: var(--color-primary) !important; }
+
+/* Primary Button */
+.btn-primary {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-white);
+  border-radius: 4px;
+}
+.btn-primary:hover {
+  background-color: #00568c; /* Darker blue */
+  border-color: #00568c;
+}
+.btn-primary:disabled {
+  background-color: var(--color-neutral);
+  border-color: var(--color-neutral);
+  color: var(--color-mid-gray);
+  opacity: 1;
+}
+
+/* Secondary Button (Outline) */
+.btn-outline-primary {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+  background-color: transparent;
+}
+.btn-outline-primary:hover {
+  background-color: var(--color-primary);
+  color: var(--color-white);
+}
+
+/* Form Controls */
+.form-control {
+  border-color: var(--color-accent);
+  border-radius: 4px;
+}
+.form-control:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 0.2rem rgba(0, 111, 179, 0.25);
+}
+.form-control.is-invalid {
+  border-color: var(--color-secondary);
+}
+.form-control:disabled {
+  background-color: var(--color-neutral);
+}
+
+/* Base Card */
+.ui-card {
+  background-color: var(--color-white);
+  border: 1px solid var(--color-neutral); /* Roughly 0.5px but standard is 1px */
+  border-radius: 12px;
+  padding: 16px;
+}
+
+/* Base Table */
+.ui-table thead {
+  background-color: var(--color-tertiary);
+  color: var(--color-white);
+}
+.ui-table tbody tr:nth-of-type(odd) {
+  background-color: var(--color-white);
+}
+.ui-table tbody tr:nth-of-type(even) {
+  background-color: var(--color-neutral);
+}
+
+/* Modals */
+.modal-content {
+  border-radius: 12px;
+  border: none;
+}

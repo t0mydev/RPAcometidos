@@ -11,3 +11,9 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Plantillas
+*.xlsx
+*.csv
+
+test_api.py

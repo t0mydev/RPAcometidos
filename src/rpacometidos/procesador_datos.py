@@ -1,10 +1,9 @@
 import pandas as pd
 import re
 from rapidfuzz import process, fuzz
-from pathlib import Path
 #Cargar la base de datos de conocidos
-_BASE_DIR = Path(__file__).resolve().parent.parent.parent
-df_conocidos = pd.read_csv(_BASE_DIR / 'datos_conocidos.csv')
+
+df_conocidos = pd.read_csv('datos_conocidos.csv')
 
 #Extraemos los nombres conocidos a una lista para agilizar la búsqueda
 nombres_conocidos = df_conocidos['nombre'].dropna().astype(str).tolist()

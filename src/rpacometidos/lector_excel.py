@@ -37,7 +37,10 @@ def procesar_planilla_completa(archivo_excel):
         # Enviamos los datos al flujo de revisión de RapidFuzz y expresiones regulares
         resultado_fila = validar_registro(datos_fila)
         
-        # Inyectamos el número de fila para que la interfaz de Vue sepa exactamente dónde marcar el error
+        # Inyectamos los datos originales y el número de fila para que la interfaz de Vue sepa exactamente dónde marcar el error
+        resultado_fila["rut"] = rut
+        resultado_fila["patente"] = patente
+        resultado_fila["nombre"] = nombre
         resultado_fila["numero_fila_excel"] = fila_indice
         
         reporte_final.append(resultado_fila)

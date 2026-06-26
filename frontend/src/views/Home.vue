@@ -1,5 +1,7 @@
 <script setup>
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+const router = useRouter()
 
 // Estado del drag-and-drop y archivo seleccionado
 const isDragging = ref(false)
@@ -33,7 +35,13 @@ const handleFileSelect = (e) => {
 // Acción del botón principal
 const handleProcess = () => {
   if (selectedFile.value) {
-    alert(`Procesando archivo: ${selectedFile.value.name}`)
+    router.push({
+      name: 'ValidacionDatos',
+      state: { fileName: selectedFile.value.name }
+    })
+    // Guardamos el archivo en sessionStorage para recuperarlo en la otra vista
+    // (no podemos pasar un File object por el router)
+    window.__excelFile = selectedFile.value
   }
 }
 </script>

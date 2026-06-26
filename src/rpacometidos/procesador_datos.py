@@ -40,8 +40,15 @@ def validar_registro(datos_entrantes):
         patron_patente = r'^[BCDFGHJKLMNPRSTVWXYZ]{4}\d{2}$'
         if re.match(patron_patente, str(patente_entrante).upper()):
             resultados_validacion['patente_valida'] = True
+
+            existe_patente = str(patente_entrante) in df_conocidos['patente'].astype(str).values
+            if existe_patente:
+                resultados_validacion['patente_valida'] = True
+            else:
+                resultados_validacion['errores'].append(f"La patente no fue encontrada en los registros conocidos: {patente_entrante}")
         else:
             resultados_validacion['errores'].append(f"Patente con formato incorrecto: {patente_entrante}")
+        
 
     #Validación de Nombre
     if not nombre_entrante or pd.isna(nombre_entrante):

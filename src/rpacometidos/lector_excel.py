@@ -12,9 +12,9 @@ def procesar_planilla_completa(archivo_excel):
     encabezados = {celda.value: celda.column for celda in hoja[1] if celda.value}
 
     # Puede que estos nombres de encabezado cambien en el futuro 
-    col_rut = encabezados.get("Rut")
-    col_patente = encabezados.get("Patente")
-    col_nombre = encabezados.get("Nombre")
+    col_rut = encabezados.get("RUT Funcionario  (Chofer)")
+    col_patente = encabezados.get("Sigla Vehiculo")
+    col_nombre = encabezados.get("Nombre Completo Funcionario (Chofer)")
 
     # Iteramos desde la fila 2 hasta la última fila con datos 
     for fila_indice in range(2, hoja.max_row + 1):

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
@@ -14,10 +14,20 @@ const checks = ref([
 const problemas = ref([])        // lista de errores con meta para el modal
 const procesando = ref(true)
 const procesandoMensaje = ref('Enviando archivo al servidor...')
+const descargando = ref(false)
+const descargarMensaje = ref('')
 
-// ─── Modal de sugerencia ──────────────────────────────────────
-const modalVisible = ref(false)
-const modalProblema = ref(null)  // el problema seleccionado
+const filas = ref([]) // copia reactiva de los registros procesados
+const correccionesAplicadas = ref(false)
+
+// ─── Computado: si tiene alguna sugerencia automática pendiente
+const tieneSugerencias = computed(() => {
+  return filas.value.some(f => 
+    (!f.nombre_valido && f.sugerencia_correccion_nombre) ||
+    (!f.rut_valido && f.sugerencia_correccion_rut) ||
+    (!f.patente_valida && f.sugerencia_correccion_patente)
+  )
+})
 
 // ─── Llamada a la API Flask ───────────────────────────────────
 onMounted(async () => {
@@ -49,6 +59,7 @@ onMounted(async () => {
 
     if (data.status === 'completado') {
       resultados = data.resultados
+      filas.value = resultados
     } else {
       procesandoMensaje.value = `Error: ${data.mensaje || 'Respuesta inesperada del servidor'}`
       procesando.value = false
@@ -77,7 +88,7 @@ async function animarChecks(resultados) {
     // Buscar si hay algún error en ese campo en cualquier fila
     const erroresCampo = []
     for (const fila of resultados) {
-      const esCampoValido = fila[`${campo}_valido`]
+      const esCampoValido = campo === 'patente' ? fila.patente_valida : fila[`${campo}_valido`]
       const erroresFila = fila.errores || []
 
       if (esCampoValido === false) {
@@ -87,8 +98,13 @@ async function animarChecks(resultados) {
         erroresCampo.push({
           fila: fila.numero_fila_excel,
           campo,
-          mensaje: mensajeError || `Fila ${fila.numero_fila_excel}: ${campo} inválido.`,
-          sugerencia: campo === 'nombre' ? fila.sugerencia_correccion_nombre : null,
+          mensaje: mensajeError || `${campo} inválido.`,
+          sugerencia: campo === 'nombre' ? fila.sugerencia_correccion_nombre 
+                    : campo === 'rut' ? fila.sugerencia_correccion_rut 
+                    : campo === 'patente' ? fila.sugerencia_correccion_patente 
+                    : null,
+          valor_actual: fila[campo],
+          fila_ref: fila
         })
       }
     }
@@ -103,15 +119,283 @@ async function animarChecks(resultados) {
   }
 }
 
-// ─── Abrir modal de sugerencia ────────────────────────────────
-function abrirSugerencia(problema) {
-  modalProblema.value = problema
-  modalVisible.value = true
+// ─── Recalcular problemas y checks tras correcciones ──────────
+function actualizarProblemasYChecks() {
+  const camposCheck = ['nombre', 'rut', 'patente']
+  const labels = {
+    nombre: 'Revisando nombres...',
+    rut: 'Revisando RUT...',
+    patente: 'Revisando Patente vehículo...'
+  }
+
+  problemas.value = []
+
+  checks.value = camposCheck.map((campo) => {
+    const checkId = campo === 'nombre' ? 'nombres' : campo
+    const erroresCampo = []
+    
+    for (const fila of filas.value) {
+      const esCampoValido = campo === 'patente' ? fila.patente_valida : fila[`${campo}_valido`]
+      const erroresFila = fila.errores || []
+
+      if (esCampoValido === false) {
+        const mensajeError = erroresFila.find(e =>
+          e.toLowerCase().includes(campo === 'rut' ? 'rut' : campo === 'patente' ? 'patente' : 'nombre')
+        )
+        erroresCampo.push({
+          fila: fila.numero_fila_excel,
+          campo,
+          mensaje: mensajeError || `${campo} inválido.`,
+          sugerencia: campo === 'nombre' ? fila.sugerencia_correccion_nombre 
+                    : campo === 'rut' ? fila.sugerencia_correccion_rut 
+                    : campo === 'patente' ? fila.sugerencia_correccion_patente 
+                    : null,
+          valor_actual: fila[campo],
+          fila_ref: fila
+        })
+      }
+    }
+
+    const estado = erroresCampo.length === 0 ? 'ok' : 'error'
+    if (estado === 'error') {
+      problemas.value.push(...erroresCampo)
+    }
+
+    return {
+      id: checkId,
+      label: labels[campo],
+      estado,
+      erroresCampo
+    }
+  })
 }
 
-function cerrarModal() {
-  modalVisible.value = false
-  modalProblema.value = null
+// ─── Corregir Fila Directamente (aplica sugerencia automática) ──
+function corregirFilaDirectamente(p) {
+  if (p && p.sugerencia) {
+    // Actualizamos el valor en la referencia de la fila con la sugerencia
+    p.fila_ref[p.campo] = p.sugerencia
+    // Marcamos el campo como válido
+    p.fila_ref[p.campo === 'patente' ? 'patente_valida' : `${p.campo}_valido`] = true
+    
+    // Removemos la sugerencia ya que fue aplicada
+    if (p.campo === 'nombre') {
+      p.fila_ref.sugerencia_correccion_nombre = null
+    } else if (p.campo === 'rut') {
+      p.fila_ref.sugerencia_correccion_rut = null
+    } else if (p.campo === 'patente') {
+      p.fila_ref.sugerencia_correccion_patente = null
+    }
+
+    // Removemos de los errores del registro el mensaje correspondiente
+    p.fila_ref.errores = p.fila_ref.errores.filter(err => 
+      !err.toLowerCase().includes(p.campo === 'rut' ? 'rut' : p.campo === 'patente' ? 'patente' : 'nombre')
+    )
+
+    actualizarProblemasYChecks()
+    correccionesAplicadas.value = true
+  }
+}
+
+// ─── Aplicar todas las sugerencias automáticamente ─────────────
+function aplicarTodasLasSugerencias() {
+  let count = 0
+  filas.value.forEach(f => {
+    // Nombre
+    if (!f.nombre_valido && f.sugerencia_correccion_nombre) {
+      f.nombre = f.sugerencia_correccion_nombre
+      f.nombre_valido = true
+      f.sugerencia_correccion_nombre = null
+      f.errores = f.errores.filter(err => !err.toLowerCase().includes('nombre'))
+      count++
+    }
+    // RUT
+    if (!f.rut_valido && f.sugerencia_correccion_rut) {
+      f.rut = f.sugerencia_correccion_rut
+      f.rut_valido = true
+      f.sugerencia_correccion_rut = null
+      f.errores = f.errores.filter(err => !err.toLowerCase().includes('rut'))
+      count++
+    }
+    // Patente
+    if (!f.patente_valida && f.sugerencia_correccion_patente) {
+      f.patente = f.sugerencia_correccion_patente
+      f.patente_valida = true
+      f.sugerencia_correccion_patente = null
+      f.errores = f.errores.filter(err => !err.toLowerCase().includes('patente'))
+      count++
+    }
+  })
+  if (count > 0) {
+    actualizarProblemasYChecks()
+    correccionesAplicadas.value = true
+  }
+}
+
+// ─── Descargar Excel Corregido ─────────────────────────────────
+async function descargarExcelCorregido() {
+  const archivo = window.__excelFile
+  if (!archivo) {
+    alert('No se encontró el archivo original en sesión. Vuelve al inicio.')
+    return
+  }
+
+  descargando.value = true
+  descargarMensaje.value = 'Generando archivo corregido...'
+
+  const formData = new FormData()
+  formData.append('documento_excel', archivo)
+
+  // Formateamos los registros para que la API en Flask los reciba correctamente
+  const payload = filas.value.map(f => ({
+    numero_fila_excel: f.numero_fila_excel,
+    rut: f.rut,
+    nombre: f.nombre,
+    patente: f.patente
+  }))
+
+  formData.append('reporte_corregido', JSON.stringify(payload))
+
+  try {
+    const resp = await fetch('/api/descargar-excel-corregido', {
+      method: 'POST',
+      body: formData,
+    })
+
+    if (!resp.ok) {
+      throw new Error(`El servidor respondió con estado ${resp.status}`)
+    }
+
+    const blob = await resp.blob()
+    const urlBlob = window.URL.createObjectURL(blob)
+
+    const link = document.createElement('a')
+    link.href = urlBlob
+
+    let filename = fileName.value.replace(/\.xlsx?$/, '_corregido.xlsx')
+    const contentDisposition = resp.headers.get('Content-Disposition')
+    if (contentDisposition) {
+      const match = contentDisposition.match(/filename="?([^"]+)"?/)
+      if (match) filename = match[1]
+    }
+
+    link.setAttribute('download', filename)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(urlBlob)
+
+    descargarMensaje.value = '¡Descarga exitosa!'
+    setTimeout(() => { descargarMensaje.value = '' }, 3000)
+
+  } catch (e) {
+    console.error(e)
+    alert(`Error al descargar el archivo: ${e.message}`)
+  } finally {
+    descargando.value = false
+  }
+}
+
+const automatizando = ref(false)
+const enAutomatizacion = ref(false)
+const logsAutomatizacion = ref([])
+const consolaCuerpoRef = ref(null)
+
+let intervaloProgreso = null
+const ultimoPasoRegistrado = ref(-1)
+
+async function agregarLog(mensaje) {
+  logsAutomatizacion.value.push(mensaje)
+  await nextTick()
+  if (consolaCuerpoRef.value) {
+    consolaCuerpoRef.value.scrollTop = consolaCuerpoRef.value.scrollHeight
+  }
+}
+
+function comenzarMonitoreoProgreso() {
+  if (intervaloProgreso) clearInterval(intervaloProgreso)
+  ultimoPasoRegistrado.value = -1
+
+  intervaloProgreso = setInterval(async () => {
+    try {
+      const resp = await fetch('/api/progreso-automatizacion')
+      if (!resp.ok) return
+
+      const data = await resp.json()
+      
+      if (data.estado === 'iniciando') {
+        const msg = 'Cargando entorno de Playwright y abriendo formulario...'
+        if (!logsAutomatizacion.value.includes(msg)) {
+          await agregarLog(msg)
+        }
+      } else if (data.estado === 'ejecutando') {
+        if (data.paso !== ultimoPasoRegistrado.value) {
+          ultimoPasoRegistrado.value = data.paso
+          await agregarLog(`Paso ${data.paso} de ${data.total}: Procesando registro de ${data.nombre}...`)
+        }
+      } else if (data.estado === 'completado') {
+        await agregarLog('¡Automatización finalizada exitosamente!')
+        detenerMonitoreoProgreso()
+        automatizando.value = false
+      } else if (data.estado === 'error') {
+        await agregarLog(`Error durante la automatización: ${data.nombre || 'Desconocido'}`)
+        detenerMonitoreoProgreso()
+        automatizando.value = false
+      }
+    } catch (e) {
+      console.error('Error al consultar el progreso:', e)
+    }
+  }, 1000)
+}
+
+function detenerMonitoreoProgreso() {
+  if (intervaloProgreso) {
+    clearInterval(intervaloProgreso)
+    intervaloProgreso = null
+  }
+}
+
+onUnmounted(() => {
+  detenerMonitoreoProgreso()
+})
+
+async function empezarAutomatizacion() {
+  automatizando.value = true
+  enAutomatizacion.value = true
+  logsAutomatizacion.value = []
+  await agregarLog('Iniciando el motor de automatización...')
+  
+  try {
+    const payload = filas.value.map(f => ({
+      rut: f.rut,
+      nombre: f.nombre,
+      patente: f.patente
+    }))
+
+    const resp = await fetch('/api/empezar-automatizacion', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    })
+
+    if (!resp.ok) {
+      throw new Error(`El servidor respondió con estado ${resp.status}`)
+    }
+
+    const data = await resp.json()
+    if (data.status === 'iniciado') {
+      comenzarMonitoreoProgreso()
+    } else {
+      await agregarLog(`Error al iniciar la automatización: ${data.mensaje}`)
+      automatizando.value = false
+    }
+  } catch (e) {
+    console.error(e)
+    await agregarLog(`Error al conectar con el servidor: ${e.message}`)
+    automatizando.value = false
+  }
 }
 
 // ─── Volver al inicio ─────────────────────────────────────────
@@ -124,7 +408,6 @@ function volverAlInicio() {
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
-
 </script>
 
 <template>
@@ -159,40 +442,124 @@ function delay(ms) {
             <li
               v-for="(err, idx) in check.erroresCampo"
               :key="idx"
-              class="sub-error-item clickeable"
-              @click="abrirSugerencia(err)"
+              class="sub-error-item d-flex flex-column gap-1 mb-2"
             >
-              <i class="bi bi-chevron-right me-1"></i>
-              <span>Fila {{ err.fila }}: ver detalle</span>
+              <div class="d-flex align-items-center justify-content-between">
+                <span><strong class="text-dark">{{ err.valor_actual || '(Vacío)' }}</strong></span>
+              </div>
+              <div v-if="err.sugerencia" class="d-flex align-items-center justify-content-between bg-dark p-1 rounded border border-warning mt-1">
+                <span class="text-warning small me-2" style="font-size: 11px;">
+                  <i class="bi bi-lightbulb-fill"></i> ¿{{ err.sugerencia }}?
+                </span>
+                <button 
+                  class="btn btn-xs btn-warning py-0 px-2 fw-bold text-dark"
+                  style="font-size: 10px;"
+                  @click="corregirFilaDirectamente(err)"
+                >
+                  Corregir
+                </button>
+              </div>
             </li>
           </ul>
         </li>
       </ul>
 
-      <!-- Botón volver -->
-      <button class="btn btn-outline-primary btn-volver mt-4" @click="volverAlInicio">
-        <i class="bi bi-arrow-left me-2"></i>Volver al inicio
-      </button>
+      <!-- Acciones de archivo -->
+      <div class="actions-container">
+        <!-- Botón Auto-corregir -->
+        <button 
+          v-if="!procesando && tieneSugerencias"
+          class="btn btn-warning w-100 mb-2 py-2 fw-bold text-dark d-flex align-items-center justify-content-center gap-2"
+          @click="aplicarTodasLasSugerencias"
+        >
+          <i class="bi bi-magic"></i>
+          <span>Auto-corregir Todo</span>
+        </button>
+
+        <!-- Botón Empezar automatización -->
+        <button 
+          v-if="!procesando && problemas.length === 0"
+          class="btn btn-primary w-100 mb-2 py-2 fw-bold d-flex align-items-center justify-content-center gap-2"
+          :disabled="automatizando"
+          @click="empezarAutomatizacion"
+        >
+          <span v-if="automatizando" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+          <i v-else class="bi bi-play-circle-fill"></i>
+          <span>{{ automatizando ? 'Ejecutando...' : 'Empezar automatización' }}</span>
+        </button>
+
+        <!-- Botón descargar corregido -->
+        <button 
+          v-if="!procesando"
+          class="btn btn-success w-100 mb-3 py-2 fw-bold d-flex align-items-center justify-content-center gap-2"
+          :disabled="descargando || !correccionesAplicadas"
+          @click="descargarExcelCorregido"
+        >
+          <span v-if="descargando" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+          <i v-else class="bi bi-file-earmark-arrow-down-fill"></i>
+          <span>{{ descargando ? 'Generando...' : 'Descargar Excel' }}</span>
+        </button>
+
+        <!-- Botón volver -->
+        <button class="btn btn-outline-primary btn-volver w-100 py-2" @click="volverAlInicio">
+          <i class="bi bi-arrow-left me-2"></i>Volver al inicio
+        </button>
+      </div>
     </aside>
 
     <!-- ── Panel derecho: Consola de problemas ── -->
     <main class="panel-consola">
       <div class="consola-header">
         <i class="bi bi-terminal-fill me-2"></i>
-        Problemas Específicos Identificados:
+        <span v-if="enAutomatizacion">Progreso de la Automatización:</span>
+        <span v-else>Problemas Específicos Identificados:</span>
       </div>
 
-      <div class="consola-cuerpo">
+      <div class="consola-cuerpo" ref="consolaCuerpoRef">
         <!-- Estado: procesando -->
         <div v-if="procesando" class="consola-procesando">
           <span class="cursor-blink">▌</span>
           {{ procesandoMensaje }}
         </div>
 
+        <!-- Si estamos en automatización -->
+        <template v-else-if="enAutomatizacion">
+          <div class="consola-intro">
+            Ejecutando robot de automatización en Playwright
+          </div>
+          <div
+            v-for="(log, idx) in logsAutomatizacion"
+            :key="idx"
+            class="consola-linea py-2"
+          >
+            <div>
+              <span class="linea-prefijo">› </span>
+              <span class="linea-mensaje text-white">{{ log }}</span>
+            </div>
+          </div>
+          <!-- Si seguimos automatizando, show cursor blink -->
+          <div v-if="automatizando" class="consola-procesando mt-2">
+            <span class="cursor-blink">▌</span>
+            Ejecutando...
+          </div>
+        </template>
+
         <!-- Sin problemas -->
-        <div v-else-if="problemas.length === 0" class="consola-ok">
-          <i class="bi bi-check2-circle me-2"></i>
-          No se encontraron problemas en el archivo <strong>{{ fileName }}</strong>.
+        <div v-else-if="problemas.length === 0" class="consola-ok d-flex flex-column align-items-center justify-content-center text-center p-4">
+          <i class="bi bi-check2-circle mb-3 text-success" style="font-size: 48px;"></i>
+          <div class="mb-3 text-white">
+            No se encontraron problemas en el archivo <strong>{{ fileName }}</strong>.
+          </div>
+          <button 
+            class="btn btn-primary px-4 py-2 fw-bold d-flex align-items-center gap-2 border-0"
+            style="background-color: var(--color-primary);"
+            :disabled="automatizando"
+            @click="empezarAutomatizacion"
+          >
+            <span v-if="automatizando" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+            <i v-else class="bi bi-play-circle-fill"></i>
+            <span>{{ automatizando ? 'Iniciando...' : 'Empezar automatización' }}</span>
+          </button>
         </div>
 
         <!-- Lista de problemas -->
@@ -204,53 +571,16 @@ function delay(ms) {
           <div
             v-for="(p, idx) in problemas"
             :key="idx"
-            class="consola-linea"
-            :class="{ 'linea-clickeable': p.sugerencia }"
-            @click="p.sugerencia ? abrirSugerencia(p) : null"
+            class="consola-linea py-2"
           >
-            <span class="linea-prefijo">› </span>
-            <span class="linea-fila">[Fila {{ p.fila }}]</span>
-            <span class="linea-mensaje">{{ p.mensaje }}</span>
-            <span v-if="p.sugerencia" class="linea-badge-sugerencia">
-              <i class="bi bi-lightbulb-fill me-1"></i>Sugerencia disponible
-            </span>
+            <div>
+              <span class="linea-prefijo">› </span>
+              <span class="linea-mensaje">{{ p.mensaje }}</span>
+            </div>
           </div>
         </template>
       </div>
     </main>
-
-    <!-- ── Modal de sugerencia ── -->
-    <Transition name="modal-fade">
-      <div v-if="modalVisible" class="modal-overlay" @click.self="cerrarModal">
-        <div class="modal-box">
-          <div class="modal-box-header">
-            <i class="bi bi-lightbulb-fill me-2 text-warning"></i>
-            Sugerencia de corrección
-          </div>
-          <div class="modal-box-body" v-if="modalProblema">
-            <p class="modal-campo-label">Campo con problema:</p>
-            <p class="modal-campo-valor error-text">{{ modalProblema.mensaje }}</p>
-
-            <template v-if="modalProblema.sugerencia">
-              <p class="modal-campo-label mt-3">Posible corrección:</p>
-              <p class="modal-campo-valor ok-text">
-                <i class="bi bi-arrow-right-circle-fill me-2"></i>
-                {{ modalProblema.sugerencia }}
-              </p>
-              <p class="modal-nota">
-                Esta sugerencia proviene de los registros conocidos. Verifica antes de aplicar.
-              </p>
-            </template>
-            <template v-else>
-              <p class="modal-nota mt-3">No se encontró una sugerencia automática para este campo.</p>
-            </template>
-          </div>
-          <div class="modal-box-footer">
-            <button class="btn btn-primary px-4" @click="cerrarModal">Entendido</button>
-          </div>
-        </div>
-      </div>
-    </Transition>
 
   </div>
 </template>
@@ -260,8 +590,8 @@ function delay(ms) {
 .validacion-container {
   display: flex;
   min-height: calc(100vh - 57px); /* descuenta el navbar */
-  background-color: var(--color-tertiary);
-  color: var(--color-white);
+  background-color: var(--color-white);
+  color: var(--color-black);
   font-family: var(--font-body);
   position: relative;
 }
@@ -271,7 +601,7 @@ function delay(ms) {
   width: 320px;
   min-width: 260px;
   padding: 48px 32px;
-  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  border-right: 1px solid rgba(0, 0, 0, 0.1);
   display: flex;
   flex-direction: column;
 }
@@ -280,7 +610,7 @@ function delay(ms) {
   font-family: var(--font-title);
   font-size: 18px;
   font-weight: 500;
-  color: var(--color-white);
+  color: var(--color-black);
   margin-bottom: 24px;
   letter-spacing: 0.5px;
 }
@@ -327,14 +657,14 @@ function delay(ms) {
 .estado-pendiente .check-label { color: var(--color-mid-gray); }
 .estado-pendiente .check-icono { color: var(--color-mid-gray); }
 
-.estado-revisando .check-label { color: #6db3f2; }
-.estado-revisando .check-icono { color: #6db3f2; }
+.estado-revisando .check-label { color: var(--color-primary); }
+.estado-revisando .check-icono { color: var(--color-primary); }
 
-.estado-ok .check-label { color: #4caf82; }
-.estado-ok .check-icono { color: #4caf82; }
+.estado-ok .check-label { color: #1e7e53; }
+.estado-ok .check-icono { color: #1e7e53; }
 
-.estado-error .check-label { color: var(--color-secondary); }
-.estado-error .check-icono { color: var(--color-secondary); }
+.estado-error .check-label { color: #d93025; }
+.estado-error .check-icono { color: #d93025; }
 
 /* Sub-lista de errores clicables */
 .sub-errores {
@@ -348,7 +678,7 @@ function delay(ms) {
 
 .sub-error-item {
   font-size: 12px;
-  color: var(--color-secondary);
+  color: #d93025;
   opacity: 0.85;
 }
 
@@ -371,9 +701,15 @@ function delay(ms) {
   animation: spin 0.8s linear infinite;
 }
 
+/* Acciones container en sidebar */
+.actions-container {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+}
+
 /* Botón volver */
 .btn-volver {
-  margin-top: auto;
   font-size: 14px;
   color: var(--color-accent);
   border-color: var(--color-accent);
@@ -399,19 +735,19 @@ function delay(ms) {
   font-weight: 500;
   color: var(--color-white);
   padding: 10px 16px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  border: 1px solid rgba(0, 0, 0, 0.15);
   border-radius: 8px 8px 0 0;
-  background: rgba(255, 255, 255, 0.05);
+  background: #1e293b; /* Slate 800 */
   display: flex;
   align-items: center;
 }
 
 .consola-cuerpo {
   flex: 1;
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  border: 1px solid rgba(0, 0, 0, 0.15);
   border-top: none;
   border-radius: 0 0 8px 8px;
-  background: rgba(0, 0, 0, 0.25);
+  background: #0f172a; /* Slate 900 dark bg */
   padding: 20px 24px;
   min-height: 320px;
   font-family: 'Courier New', Courier, monospace;

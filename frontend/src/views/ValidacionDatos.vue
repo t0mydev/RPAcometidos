@@ -7,9 +7,8 @@ const router = useRouter()
 // ─── Estado general ───────────────────────────────────────────
 const fileName = ref(history.state?.fileName || 'archivo.xlsx')
 const checks = ref([
-  { id: 'nombres',  label: 'Revisando nombres...',          estado: 'pendiente' },
   { id: 'rut',      label: 'Revisando RUT...',              estado: 'pendiente' },
-  { id: 'patente',  label: 'Revisando Patente vehículo...', estado: 'pendiente' },
+  { id: 'sigla',  label: 'Revisando sigla vehículo...', estado: 'pendiente' },
 ])
 const problemas = ref([])        // lista de errores con meta para el modal
 const procesando = ref(true)
@@ -23,9 +22,8 @@ const correccionesAplicadas = ref(false)
 // ─── Computado: si tiene alguna sugerencia automática pendiente
 const tieneSugerencias = computed(() => {
   return filas.value.some(f => 
-    (!f.nombre_valido && f.sugerencia_correccion_nombre) ||
     (!f.rut_valido && f.sugerencia_correccion_rut) ||
-    (!f.patente_valida && f.sugerencia_correccion_patente)
+    (!f.sigla_valida && f.sugerencia_correccion_sigla)
   )
 })
 
@@ -78,7 +76,7 @@ onMounted(async () => {
 
 // ─── Animación secuencial de checks ──────────────────────────
 async function animarChecks(resultados) {
-  const camposCheck = ['nombre', 'rut', 'patente']
+  const camposCheck = ['rut', 'sigla']
 
   for (let i = 0; i < checks.value.length; i++) {
     checks.value[i].estado = 'revisando'
@@ -88,20 +86,19 @@ async function animarChecks(resultados) {
     // Buscar si hay algún error en ese campo en cualquier fila
     const erroresCampo = []
     for (const fila of resultados) {
-      const esCampoValido = campo === 'patente' ? fila.patente_valida : fila[`${campo}_valido`]
+      const esCampoValido = campo === 'sigla' ? fila.sigla_valida : fila[`${campo}_valido`]
       const erroresFila = fila.errores || []
 
       if (esCampoValido === false) {
         const mensajeError = erroresFila.find(e =>
-          e.toLowerCase().includes(campo === 'rut' ? 'rut' : campo === 'patente' ? 'patente' : 'nombre')
+          e.toLowerCase().includes(campo === 'rut' ? 'rut' : 'sigla')
         )
         erroresCampo.push({
           fila: fila.numero_fila_excel,
           campo,
           mensaje: mensajeError || `${campo} inválido.`,
-          sugerencia: campo === 'nombre' ? fila.sugerencia_correccion_nombre 
-                    : campo === 'rut' ? fila.sugerencia_correccion_rut 
-                    : campo === 'patente' ? fila.sugerencia_correccion_patente 
+          sugerencia: campo === 'rut' ? fila.sugerencia_correccion_rut 
+                    : campo === 'sigla' ? fila.sugerencia_correccion_sigla 
                     : null,
           valor_actual: fila[campo],
           fila_ref: fila
@@ -121,34 +118,32 @@ async function animarChecks(resultados) {
 
 // ─── Recalcular problemas y checks tras correcciones ──────────
 function actualizarProblemasYChecks() {
-  const camposCheck = ['nombre', 'rut', 'patente']
+  const camposCheck = ['rut', 'sigla']
   const labels = {
-    nombre: 'Revisando nombres...',
     rut: 'Revisando RUT...',
-    patente: 'Revisando Patente vehículo...'
+    sigla: 'Revisando sigla vehículo...'
   }
 
   problemas.value = []
 
   checks.value = camposCheck.map((campo) => {
-    const checkId = campo === 'nombre' ? 'nombres' : campo
+    const checkId = campo
     const erroresCampo = []
     
     for (const fila of filas.value) {
-      const esCampoValido = campo === 'patente' ? fila.patente_valida : fila[`${campo}_valido`]
+      const esCampoValido = campo === 'sigla' ? fila.sigla_valida : fila[`${campo}_valido`]
       const erroresFila = fila.errores || []
 
       if (esCampoValido === false) {
         const mensajeError = erroresFila.find(e =>
-          e.toLowerCase().includes(campo === 'rut' ? 'rut' : campo === 'patente' ? 'patente' : 'nombre')
+          e.toLowerCase().includes(campo === 'rut' ? 'rut' : 'sigla')
         )
         erroresCampo.push({
           fila: fila.numero_fila_excel,
           campo,
           mensaje: mensajeError || `${campo} inválido.`,
-          sugerencia: campo === 'nombre' ? fila.sugerencia_correccion_nombre 
-                    : campo === 'rut' ? fila.sugerencia_correccion_rut 
-                    : campo === 'patente' ? fila.sugerencia_correccion_patente 
+          sugerencia: campo === 'rut' ? fila.sugerencia_correccion_rut 
+                    : campo === 'sigla' ? fila.sugerencia_correccion_sigla 
                     : null,
           valor_actual: fila[campo],
           fila_ref: fila
@@ -173,23 +168,21 @@ function actualizarProblemasYChecks() {
 // ─── Corregir Fila Directamente (aplica sugerencia automática) ──
 function corregirFilaDirectamente(p) {
   if (p && p.sugerencia) {
-    // Actualizamos el valor en la referencia de la fila con la sugerencia
+    // Actualiza el valor en la referencia de la fila con la sugerencia
     p.fila_ref[p.campo] = p.sugerencia
-    // Marcamos el campo como válido
-    p.fila_ref[p.campo === 'patente' ? 'patente_valida' : `${p.campo}_valido`] = true
+    // Marca el campo como válido
+    p.fila_ref[p.campo === 'sigla' ? 'sigla_valida' : `${p.campo}_valido`] = true
     
-    // Removemos la sugerencia ya que fue aplicada
-    if (p.campo === 'nombre') {
-      p.fila_ref.sugerencia_correccion_nombre = null
-    } else if (p.campo === 'rut') {
+    // Remove la sugerencia ya que fue aplicada
+    if (p.campo === 'rut') {
       p.fila_ref.sugerencia_correccion_rut = null
-    } else if (p.campo === 'patente') {
-      p.fila_ref.sugerencia_correccion_patente = null
+    } else if (p.campo === 'sigla') {
+      p.fila_ref.sugerencia_correccion_sigla = null
     }
 
-    // Removemos de los errores del registro el mensaje correspondiente
+    // Remove de los errores del registro el mensaje correspondiente
     p.fila_ref.errores = p.fila_ref.errores.filter(err => 
-      !err.toLowerCase().includes(p.campo === 'rut' ? 'rut' : p.campo === 'patente' ? 'patente' : 'nombre')
+      !err.toLowerCase().includes(p.campo === 'rut' ? 'rut' : 'sigla')
     )
 
     actualizarProblemasYChecks()
@@ -201,14 +194,6 @@ function corregirFilaDirectamente(p) {
 function aplicarTodasLasSugerencias() {
   let count = 0
   filas.value.forEach(f => {
-    // Nombre
-    if (!f.nombre_valido && f.sugerencia_correccion_nombre) {
-      f.nombre = f.sugerencia_correccion_nombre
-      f.nombre_valido = true
-      f.sugerencia_correccion_nombre = null
-      f.errores = f.errores.filter(err => !err.toLowerCase().includes('nombre'))
-      count++
-    }
     // RUT
     if (!f.rut_valido && f.sugerencia_correccion_rut) {
       f.rut = f.sugerencia_correccion_rut
@@ -217,12 +202,12 @@ function aplicarTodasLasSugerencias() {
       f.errores = f.errores.filter(err => !err.toLowerCase().includes('rut'))
       count++
     }
-    // Patente
-    if (!f.patente_valida && f.sugerencia_correccion_patente) {
-      f.patente = f.sugerencia_correccion_patente
-      f.patente_valida = true
-      f.sugerencia_correccion_patente = null
-      f.errores = f.errores.filter(err => !err.toLowerCase().includes('patente'))
+    // sigla
+    if (!f.sigla_valida && f.sugerencia_correccion_sigla) {
+      f.sigla = f.sugerencia_correccion_sigla
+      f.sigla_valida = true
+      f.sugerencia_correccion_sigla = null
+      f.errores = f.errores.filter(err => !err.toLowerCase().includes('sigla'))
       count++
     }
   })
@@ -246,12 +231,29 @@ async function descargarExcelCorregido() {
   const formData = new FormData()
   formData.append('documento_excel', archivo)
 
-  // Formateamos los registros para que la API en Flask los reciba correctamente
+  // Formatea los registros para que la API en Flask los reciba correctamente
   const payload = filas.value.map(f => ({
     numero_fila_excel: f.numero_fila_excel,
     rut: f.rut,
     nombre: f.nombre,
-    patente: f.patente
+    sigla: f.sigla,
+    lugar_cometido: f.lugar_cometido,
+    region_principal: f.region_principal,
+    regiones: f.regiones,
+    personal_trasladado: f.personal_trasladado,
+    nombre_aprobador: f.nombre_aprobador,
+    nombre_firmantes: f.nombre_firmantes,
+    tipo_imputacion_presupuestaria: f.tipo_imputacion_presupuestaria,
+    fallback_considerando: f.fallback_considerando,
+    regiones: f.regiones,
+    atribucion: f.atribucion,
+    dias_salida: f.dias_salida,
+    dias_100: f.dias_100,
+    dias_70: f.dias_70,
+    dias_60: f.dias_60,
+    dias_50: f.dias_50,
+    dias_40: f.dias_40,
+    dias_35: f.dias_35
   }))
 
   formData.append('reporte_corregido', JSON.stringify(payload))
@@ -368,8 +370,23 @@ async function empezarAutomatizacion() {
   try {
     const payload = filas.value.map(f => ({
       rut: f.rut,
-      nombre: f.nombre,
-      patente: f.patente
+      sigla: f.sigla,
+      fechainicio: f.fechainicio,
+      fechatermino: f.fechatermino,
+      tipo_movilizacion: f.tipo_movilizacion,
+      personal_trasladado: f.personal_trasladado,
+      fallback_considerando: f.fallback_considerando,
+      lugar_cometido: f.lugar_cometido,
+      regiones: f.regiones,
+      atribucion: f.atribucion,
+      dias_salida: f.dias_salida,
+      dias_100: f.dias_100,
+      dias_70: f.dias_70,
+      dias_60: f.dias_60,
+      dias_50: f.dias_50,
+      dias_40: f.dias_40,
+      dias_35: f.dias_35,
+      tipo_imputacion_presupuestaria: f.tipo_imputacion_presupuestaria
     }))
 
     const resp = await fetch('/api/empezar-automatizacion', {
@@ -522,7 +539,7 @@ function delay(ms) {
           {{ procesandoMensaje }}
         </div>
 
-        <!-- Si estamos en automatización -->
+        <!-- Si esta en automatización -->
         <template v-else-if="enAutomatizacion">
           <div class="consola-intro">
             Ejecutando robot de automatización en Playwright
@@ -537,7 +554,7 @@ function delay(ms) {
               <span class="linea-mensaje text-white">{{ log }}</span>
             </div>
           </div>
-          <!-- Si seguimos automatizando, show cursor blink -->
+          <!-- Si sigue automatizando, show cursor blink -->
           <div v-if="automatizando" class="consola-procesando mt-2">
             <span class="cursor-blink">▌</span>
             Ejecutando...

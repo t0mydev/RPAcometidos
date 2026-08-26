@@ -19,3 +19,6 @@ venv.bak/
 test_api.py
 .vscode/
 *.json
+
+# Frontend build generado para Flask
+src/rpacometidos/vue/

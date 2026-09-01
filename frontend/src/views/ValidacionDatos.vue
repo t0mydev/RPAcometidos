@@ -305,6 +305,7 @@ const consolaCuerpoRef = ref(null)
 
 let intervaloProgreso = null
 const ultimoPasoRegistrado = ref(-1)
+const ultimoMensajeRegistrado = ref('')
 
 async function agregarLog(mensaje) {
   logsAutomatizacion.value.push(mensaje)
@@ -317,6 +318,7 @@ async function agregarLog(mensaje) {
 function comenzarMonitoreoProgreso() {
   if (intervaloProgreso) clearInterval(intervaloProgreso)
   ultimoPasoRegistrado.value = -1
+  ultimoMensajeRegistrado.value = ''
 
   intervaloProgreso = setInterval(async () => {
     try {
@@ -326,14 +328,17 @@ function comenzarMonitoreoProgreso() {
       const data = await resp.json()
       
       if (data.estado === 'iniciando') {
-        const msg = 'Cargando entorno de Playwright y abriendo formulario...'
+        const msg = data.detalle || 'Cargando entorno de Playwright...'
         if (!logsAutomatizacion.value.includes(msg)) {
           await agregarLog(msg)
         }
       } else if (data.estado === 'ejecutando') {
-        if (data.paso !== ultimoPasoRegistrado.value) {
-          ultimoPasoRegistrado.value = data.paso
-          await agregarLog(`Paso ${data.paso} de ${data.total}: Procesando registro de ${data.nombre}...`)
+        const detalleMsg = data.detalle ? ` (${data.detalle})` : ''
+        const logMsg = `Paso ${data.paso} de ${data.total}: Procesando ${data.nombre}${detalleMsg}`
+        // Si el mensaje cambió (porque avanzó de paso o cambió de etapa/detalle), lo mostramos:
+        if (ultimoMensajeRegistrado.value !== logMsg) {
+          ultimoMensajeRegistrado.value = logMsg
+          await agregarLog(logMsg)
         }
       } else if (data.estado === 'completado') {
         await agregarLog('¡Automatización finalizada exitosamente!')

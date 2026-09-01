@@ -30,7 +30,7 @@ def generar_texto_cometido_ssd(registro):
     """
     Genera el formato:
     COMETIDO DE SERVICIO (NOMBRE FUNCIONARIO) (DIA INICIO) (DIA TERMINO) (MES) (AÑO)
-    Ejemplo: COMETIDO DE SERVICIO HERNAN SAAVEDRA 17 21 AGOSTO 2026
+    Ejemplo: COMETIDO DE SERVICIO PABLO ROJAS 17 AL 21 AGOSTO 2026
     """
     rut = registro.get('rut', '')
     nombre = obtener_nombre_funcionario(rut).upper()
@@ -55,69 +55,87 @@ def generar_texto_cometido_ssd(registro):
     dia_ter_num = int(dia_ter) if dia_ter.isdigit() else dia_ter
 
     # Arma el texto final
-    return f"COMETIDO DE SERVICIO {nombre} {dia_ini_num} {dia_ter_num} {nombre_mes} {anio}".strip()
+    return f"COMETIDO DE SERVICIO {nombre} {dia_ini_num} AL {dia_ter_num} {nombre_mes} {anio}".strip()
 
 def procesar_ssd_en_pagina(pagina, datos_excel, usuario, clave):
     """
     Ejecuta el flujo de SSD dentro de una página (pestaña) de Playwright.
     """
     total_registros = len(datos_excel)
-    url_login_ssd = "https://ejemplo-ssd.gob.cl/login"
+    #url_login_ssd = "http://ssd.mop.gov.cl/"
+    url_login_ssd = "file:///home/r0ars/Downloads/Portal_SSD/Generacion%20de%20SSD%20para%20cometido.html"
 
-    guardar_progreso(0, total_registros, "Inicio de sesión SSD", "iniciando")
+    guardar_progreso(0, total_registros, "Inicio de sesión SSD", "iniciando", detalle="Iniciando sesión en Sistema SSD")
     print(f"[SSD] Iniciando sesión con usuario: {usuario}")
 
     # 1. Login en el sistema SSD
-    # pagina.goto(url_login_ssd)
-    # pagina.fill('#username', usuario)
-    # pagina.fill('#password', clave)
-    # pagina.click('#btnLogin')
-    # pagina.wait_for_load_state('networkidle')
+    pagina.goto(url_login_ssd)
+    # pagina.goto(url_ssd_local)  # Para pruebas locales, comentar esta línea en producción
+    pagina.locator('[name="txtUsuario"]').fill(usuario)
+    pagina.locator('[name="txtPass"]').fill(clave)
+    pagina.locator('[name="BtnEnviarRut"]').click()
+    pagina.wait_for_load_state('networkidle')
 
     # 2. Procesar cada registro para generar el número de proceso SSD
     for fila, registro in enumerate(datos_excel, start=1):
-        rut_raw = registro.get('rut', '')
-        guardar_progreso(fila, total_registros, f"SSD: {rut_raw}", "ejecutando")
+        rut_raw = str(registro.get('rut', '')).strip()
+        guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle="Abriendo formulario de despacho documentos en SSD")
         print(f"[SSD] Procesando registro {fila}/{total_registros}: RUT {rut_raw}")
 
         # TODO: Implementar pasos del sistema SSD aquí
 
-
-        pagina.locator('#divoCMenu0_0').hover()
-        pagina.get_by_alt_text("Despachar Documentos No Originados como respuesta a otros").click()
+        frm_main = pagina.frame_locator('frame[name="frmMain"]')
+        frm_menu = pagina.frame_locator('frame[name="frmMenu"]')
+        frm_menu.locator('#divoCMenu0_0').hover()
+        time.sleep(0.5)
+        frm_main.get_by_alt_text("Despachar Documentos", exact=False).first.click(force=True)
         pagina.wait_for_load_state('networkidle')
 
-
-        pagina.locator('#TxtOriginado_Des').fill("HUMANO")
+        guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle="Configurando remitente y destinatario en SSD")
+        frm_main.locator('[name="TxtOriginado_Des"]').fill("HUMANO")
         # Espera a que se abra la ventana emergente al presionar Enter
         with pagina.expect_popup() as popup_info1:
-            pagina.locator("#TxtOriginado_Des").press("Enter")
+            frm_main.locator('[name="TxtOriginado_Des"]').press("Enter")
     
         popup1 = popup_info1.value
+        popup1.wait_for_load_state('domcontentloaded')
 
-        popup1.locator('#cboServicio').select_option('DV')
-        popup1.locator('#cboRegion').select_option('5')
+        popup1.locator('[name="cboServicio"]').select_option('DV')
+        popup1.wait_for_load_state('networkidle')
+
+        popup1.locator('[name="cboRegion"]').select_option('5')
+        popup1.wait_for_load_state('networkidle')
+
         popup1.get_by_title("Click para Seleccionar").click()
 
 
-        pagina.locator('#TxtDestinatario_Des').fill("PARTES DRV")
+        frm_main.locator('[name="TxtDestinatario_Des"]').fill("PARTES DRV")
         with pagina.expect_popup() as popup_info2:
-            pagina.locator("#TxtDestinatario_Des").press("Enter")
+            frm_main.locator('[name="TxtDestinatario_Des"]').press("Enter")
 
         popup2 = popup_info2.value
-        popup2.locator('#cboServicio').select_option('DV')
-        popup2.locator('#cboRegion').select_option('5')
+        popup2.wait_for_load_state('domcontentloaded')
+
+        popup2.locator('[name="cboServicio"]').select_option('DV')
+        popup2.wait_for_load_state('networkidle')
+
+        popup2.locator('[name="cboRegion"]').select_option('5')
+        popup2.wait_for_load_state('networkidle')
+
         popup2.get_by_title("Click para Seleccionar").click()
 
-        pagina.locator('#Cbo_TipoDocto').select_option('57')
+        guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle="Generando texto de materia y guardando SSD")
+        frm_main.locator('[name="Cbo_TipoDocto"]').select_option('57')
 
         # Genera el texto del cometido
         texto_materia = generar_texto_cometido_ssd(registro)
+        frm_main.locator('[name="TxtDescripcion"]').fill(texto_materia)
         
-
+        # Guarda el documento
+        frm_main.locator('[name="Grabar"]').click()
         time.sleep(1)
 
-    guardar_progreso(total_registros, total_registros, "SSD completado", "completado")
+    guardar_progreso(total_registros, total_registros, "SSD", "completado", detalle="Automatización de SSD finalizada exitosamente")
     print("[SSD] Automatización de SSD finalizada.")
 
 def ejecutar_ssd(datos_excel=None, pagina=None, headless=False, slow_mo=600):
@@ -128,7 +146,7 @@ def ejecutar_ssd(datos_excel=None, pagina=None, headless=False, slow_mo=600):
     if datos_excel is None:
         datos_excel = cargar_datos_automatizacion()
 
-    usuario, clave = cargar_credenciales()
+    usuario, clave = cargar_credenciales(sistema="ssd")
 
     if pagina is not None:
         return procesar_ssd_en_pagina(pagina, datos_excel, usuario, clave)

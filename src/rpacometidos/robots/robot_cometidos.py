@@ -10,14 +10,15 @@ def procesar_cometidos_en_pagina(pagina, datos_excel, usuario, clave):
     """
     Ejecuta el flujo de cometidos dentro de una página (pestaña) de Playwright.
     """
-    url_login_personal = "https://personal.mop.gob.cl"
-    url_cometido = "https://personal.mop.gob.cl/Viatico/FormCreaViatico"
+    #url_login_personal = "https://personal.mop.gob.cl"
+    #url_cometido = "https://personal.mop.gob.cl/Viatico/FormCreaViatico"
+    url_login_personal = "file:///home/r0ars/Downloads/Portal%20Personal/Acceso%20__%20Sistema%20de%20Recursos%20Humanos%20__.html"
+    url_cometido = "file:///home/r0ars/Downloads/Portal%20Personal/Crear%20Cometido%20Individual%20__%20Sistema%20de%20Recursos%20Humanos%20__.html"
 
     total_registros = len(datos_excel)
 
     # 1. Iniciar sesión en /personal/login
-    guardar_progreso(0, total_registros, "Inicio de sesión", "iniciando")
-    print(f"[Cometidos] Iniciando sesión con usuario: {usuario}")
+    guardar_progreso(0, total_registros, "Inicio de sesión", "iniciando", detalle="Iniciando sesión en Portal Personal")
     pagina.goto(url_login_personal)
     pagina.fill('#iduser', usuario)
     pagina.fill('#idpassword', clave)
@@ -27,7 +28,7 @@ def procesar_cometidos_en_pagina(pagina, datos_excel, usuario, clave):
     # 2. Iterar por fila y completar cada cometido del Excel
     for fila, registro in enumerate(datos_excel, start=1):
         rut_raw = str(registro.get('rut', '')).strip()
-        guardar_progreso(fila, total_registros, rut_raw, "ejecutando")
+        guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle="Buscando funcionario")
         print(f"[Cometidos] Procesando registro {fila}/{total_registros}: RUT {rut_raw}")
 
         # Navega a la vista de crear cometido
@@ -40,6 +41,8 @@ def procesar_cometidos_en_pagina(pagina, datos_excel, usuario, clave):
         pagina.fill('#txtRut', rut_sin_dv)
         pagina.click('#btnBuscarUsuario')
         pagina.wait_for_load_state('networkidle')
+
+        guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle="Rellenando fechas y Considerando")
 
         # 3. Rellena fecha inicio y fecha término
         fecha_inicio = str(registro.get('fechainicio', '')).strip()
@@ -221,7 +224,7 @@ def ejecutar_cometidos(datos_excel=None, pagina=None, headless=False, slow_mo=60
     if datos_excel is None:
         datos_excel = cargar_datos_automatizacion()
 
-    usuario, clave = cargar_credenciales()
+    usuario, clave = cargar_credenciales(sistema="cometidos")
 
     if pagina is not None:
         return procesar_cometidos_en_pagina(pagina, datos_excel, usuario, clave)

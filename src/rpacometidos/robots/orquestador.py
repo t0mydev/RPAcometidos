@@ -16,7 +16,8 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=600):
     if datos_excel is None:
         datos_excel = cargar_datos_automatizacion()
 
-    usuario, clave = cargar_credenciales()
+    usuario_cometidos, clave_cometidos = cargar_credenciales(sistema="cometidos")
+    usuario_ssd, clave_ssd = cargar_credenciales(sistema="ssd")
     total_registros = len(datos_excel)
 
     try:
@@ -26,18 +27,19 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=600):
             contexto = navegador.new_context()
 
             # 2. Crea las pestañas necesarias
+            # Pestaña para SSD
+            pagina_ssd = contexto.new_page()
             # Pestaña para Cometidos
             pagina_cometidos = contexto.new_page()
 
-            # Pestaña para SSD (descomentar cuando se active el robot de SSD)
-            # pagina_ssd = contexto.new_page()
+            
 
             # 3. Ejecuta los flujos
-            # Por ejemplo: primero SSD si necesitas generar el número de proceso
-            # procesar_ssd_en_pagina(pagina_ssd, datos_excel, usuario, clave)
+            # Por ejemplo: primero SSD si necesita generar el número de proceso
+            #procesar_ssd_en_pagina(pagina_ssd, datos_excel, usuario_ssd, clave_ssd)
 
             # Luego Cometidos
-            procesar_cometidos_en_pagina(pagina_cometidos, datos_excel, usuario, clave)
+            procesar_cometidos_en_pagina(pagina_cometidos, datos_excel, usuario_cometidos, clave_cometidos)
 
             navegador.close()
 

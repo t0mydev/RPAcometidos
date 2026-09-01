@@ -227,7 +227,7 @@ def empezar_automatizacion():
         with open(path_datos, "w", encoding="utf-8") as f:
             json.dump(datos_robot, f, ensure_ascii=False, indent=4)
             
-        # Ejecutam el orquestador de robots en segundo plano
+        # Ejecuta el orquestador de robots en segundo plano
         subprocess.Popen([sys.executable, "-m", "rpacometidos.robots.orquestador"], cwd=str(BASE_DIR))
         
         return jsonify({"status": "iniciado", "mensaje": "La automatización se ha iniciado correctamente."}), 200

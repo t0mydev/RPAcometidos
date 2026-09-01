@@ -333,12 +333,16 @@ function comenzarMonitoreoProgreso() {
           await agregarLog(msg)
         }
       } else if (data.estado === 'ejecutando') {
-        const detalleMsg = data.detalle ? ` (${data.detalle})` : ''
-        const logMsg = `Paso ${data.paso} de ${data.total}: Procesando ${data.nombre}${detalleMsg}`
-        // Si el mensaje cambió (porque avanzó de paso o cambió de etapa/detalle), lo mostramos:
-        if (ultimoMensajeRegistrado.value !== logMsg) {
-          ultimoMensajeRegistrado.value = logMsg
-          await agregarLog(logMsg)
+        // Mensaje inicial al comenzar un nuevo cometido/fila
+        if (data.paso !== ultimoPasoRegistrado.value) {
+          ultimoPasoRegistrado.value = data.paso
+          await agregarLog(`Cometido ${data.paso} de ${data.total}: Procesando ${data.nombre}`)
+        }
+
+        // Mensajes siguientes que actualizan la etapa en que va
+        if (data.detalle && ultimoMensajeRegistrado.value !== data.detalle) {
+          ultimoMensajeRegistrado.value = data.detalle
+          await agregarLog(data.detalle)
         }
       } else if (data.estado === 'completado') {
         await agregarLog('¡Automatización finalizada exitosamente!')

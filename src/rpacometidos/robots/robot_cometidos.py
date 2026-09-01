@@ -136,6 +136,7 @@ def procesar_cometidos_en_pagina(pagina, datos_excel, usuario, clave):
                     print(f"No se pudo marcar la región '{region}': {e}")
 
         # 11. Busca y selecciona Atribución
+        guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle="Seleccionando Atribución y TD5")
         pagina.locator('#btnModalConfiere').click()
         pagina.wait_for_load_state('networkidle')
         pagina.locator('#txtConfiereM').press_sequentially(str(registro.get('atribucion', '')).strip())
@@ -147,6 +148,7 @@ def procesar_cometidos_en_pagina(pagina, datos_excel, usuario, clave):
         pagina.get_by_title("Seleccionar TD5").click()
 
         # 13. Elegir días de la semana en el calendario
+        guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle="Configurando calendario y porcentajes")
         mapeo_dias = {
             "lunes": "sel1",
             "martes": "sel2",
@@ -190,6 +192,7 @@ def procesar_cometidos_en_pagina(pagina, datos_excel, usuario, clave):
                 pagina.locator(id_selector).fill(valor)
 
         # 15. Elegir Imputación presupuestaria
+        guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle="Seleccionando imputación presupuestaria")
         pagina.get_by_title("Buscar Asignación Td5").click()
         pagina.wait_for_load_state('networkidle')
 
@@ -213,7 +216,7 @@ def procesar_cometidos_en_pagina(pagina, datos_excel, usuario, clave):
 
         time.sleep(2)
 
-    guardar_progreso(total_registros, total_registros, "", "completado")
+    guardar_progreso(total_registros, total_registros, "Cometidos", "completado", detalle="Automatización de cometidos finalizada exitosamente")
     print("[Cometidos] Automatización finalizada exitosamente.")
 
 def ejecutar_cometidos(datos_excel=None, pagina=None, headless=False, slow_mo=600):

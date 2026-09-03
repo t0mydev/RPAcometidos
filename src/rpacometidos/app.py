@@ -248,6 +248,40 @@ def progreso_automatizacion():
     else:
         return jsonify({"estado": "no_iniciado"}), 200
 
+# Funcion para crear el archivo .json de credenciales
+@app.route('/api/guardar-credenciales', methods=['POST'])
+def guardar_credenciales():
+    try:
+        # 1. Obtenemos los datos que nos envió Vue
+        datos = request.get_json() or {}
+        
+        # 2. Definimos la ruta del archivo en la raíz del proyecto
+        path_credenciales = BASE_DIR / "credenciales.json"
+        
+        # 3. Guardamos el archivo JSON en el disco
+        with open(path_credenciales, "w", encoding="utf-8") as f:
+            json.dump(datos, f, ensure_ascii=False, indent=4)
+            
+        # 4. Respondemos a Vue que todo salió bien (Código 200 = Éxito)
+        return jsonify({"status": "completado", "mensaje": "Credenciales guardadas correctamente"}), 200
+        
+    except Exception as e:
+        # Si algo falla (ej. permisos de disco), avisamos del error (Código 500 = Error del servidor)
+        return jsonify({"status": "error", "mensaje": f"Error al guardar: {str(e)}"}), 500
+# Funcion 2 para crear el archivo .json de credenciales
+@app.route('/api/obtener-credenciales', methods=['GET'])
+def obtener_credenciales():
+    try:
+        path_credenciales = BASE_DIR / "credenciales.json"
+        if path_credenciales.exists():
+            with open(path_credenciales, "r", encoding="utf-8") as f:
+                datos = json.load(f)
+            return jsonify({"status": "completado", "credenciales": datos}), 200
+        else:
+            return jsonify({"status": "completado", "credenciales": {}}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "mensaje": f"Error al leer credenciales: {str(e)}"}), 500
+
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

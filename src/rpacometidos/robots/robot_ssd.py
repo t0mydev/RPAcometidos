@@ -131,6 +131,7 @@ def procesar_ssd_en_pagina(pagina, datos_excel, usuario, clave):
         # Genera el texto del cometido
         guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle="Generando texto y rellenando materia en SSD")
         texto_materia = generar_texto_cometido_ssd(registro)
+        time.sleep(0.5)
         frm_main.locator('[name="TxtDescripcion"]').fill(texto_materia)
 
 

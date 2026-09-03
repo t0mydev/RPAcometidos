@@ -10,7 +10,7 @@ from rpacometidos.robots.robot_cometidos import procesar_cometidos_en_pagina
 from rpacometidos.robots.robot_ssd import procesar_ssd_en_pagina
 from rpacometidos.robots.robot_firmador import procesar_firmador_en_pagina
 
-def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=600):
+def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=0):
     """
     Orquestador principal: abre UNA SOLA ventana de navegador y ejecuta
     los robots en pestañas (páginas) separadas compartiendo el mismo contexto.
@@ -31,7 +31,7 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=600):
 
             # 2. Crea las pestañas necesarias
             # Pestaña para SSD
-            pagina_ssd = contexto.new_page()
+            #pagina_ssd = contexto.new_page()
             # Pestaña para Cometidos
             pagina_cometidos = contexto.new_page()
             # Pestaña para Firmador
@@ -40,7 +40,7 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=600):
 
             # 3. Ejecuta los flujos
             # Primero SSD, necesita generar el número de proceso
-            procesar_ssd_en_pagina(pagina_ssd, datos_excel, usuario_ssd, clave_ssd)
+            #procesar_ssd_en_pagina(pagina_ssd, datos_excel, usuario_ssd, clave_ssd)
 
             # Luego Cometidos
             procesar_cometidos_en_pagina(pagina_cometidos, datos_excel, usuario_cometidos, clave_cometidos)

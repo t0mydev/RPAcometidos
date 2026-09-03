@@ -151,26 +151,20 @@ def procesar_cometidos_en_pagina(pagina, datos_excel, usuario, clave):
 
         # 13. Elegir días de la semana en el calendario
         guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle="Configurando calendario y porcentajes")
-        mapeo_dias = {
-            "lunes": "sel1",
-            "martes": "sel2",
-            "miercoles": "sel3", "miércoles": "sel3",
-            "jueves": "sel4",
-            "viernes": "sel5",
-            "sabado": "sel6", "sábado": "sel6",
-            "domingo": "sel7"
-        }
         pagina.locator('#btnCalendarioViatico').click()
+        pagina.locator('#resultado_calendario tr').first.wait_for(state="visible")
 
         dias_salida_raw = str(registro.get('dias_salida', '')).strip()
         if dias_salida_raw:
-            dias_solicitados = [d.strip().lower() for d in dias_salida_raw.split(",")]
-            checklist = [mapeo_dias[dia] for dia in dias_solicitados if dia in mapeo_dias]
-            for sel in checklist:
-                try:
-                    pagina.locator(f'#{sel}').check()
-                except Exception:
-                    pass
+            
+
+            dias_solicitados = [d.strip().lower().replace('á', 'a').replace('é', 'e').replace('í', 'i').replace('ó', 'o').replace('ú', 'u') for d in dias_salida_raw.split(",") if d.strip()]
+            filas_calendario = pagina.locator('#resultado_calendario tr')
+            for i in range(filas_calendario.count()):
+                fila_cal = filas_calendario.nth(i)
+                nombre_dia = fila_cal.locator('td').nth(2).inner_text().strip().lower().replace('á', 'a').replace('é', 'e').replace('í', 'i').replace('ó', 'o').replace('ú', 'u')
+                if nombre_dia in dias_solicitados:
+                    fila_cal.locator('input[type="checkbox"]').check()
 
         pagina.locator('#btnGrabaCalendario').click()
 

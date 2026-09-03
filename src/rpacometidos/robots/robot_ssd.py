@@ -1,9 +1,11 @@
 import time
 import csv
+import re
 from playwright.sync_api import sync_playwright
 from rpacometidos.robots.base import (
     guardar_progreso,
     cargar_datos_automatizacion,
+    guardar_datos_automatizacion,
     cargar_credenciales,
     BASE_DIR
 )
@@ -62,15 +64,23 @@ def procesar_ssd_en_pagina(pagina, datos_excel, usuario, clave):
     Ejecuta el flujo de SSD dentro de una página (pestaña) de Playwright.
     """
     total_registros = len(datos_excel)
-    #url_login_ssd = "http://ssd.mop.gov.cl/"
-    url_login_ssd = "file:///home/r0ars/Downloads/Portal_SSD/Generacion%20de%20SSD%20para%20cometido.html"
+    numero_capturado = {}
+
+    def manejar_dialogo_ssd(dialog):
+        texto = dialog.message
+        match = re.search(r'\d+', texto)
+        numero_capturado['numero'] = match.group() if match else ""
+        time.sleep(5)
+
+        dialog.accept()
+
+    url_login_ssd = "http://ssd.mop.gov.cl/"
+    #url_login_ssd = "file:///home/r0ars/Downloads/test_alerta_ssd.html"
 
     guardar_progreso(0, total_registros, "Inicio de sesión SSD", "iniciando", detalle="Iniciando sesión en Sistema SSD")
-    print(f"[SSD] Iniciando sesión con usuario: {usuario}")
 
-    # 1. Login en el sistema SSD
+    # # 1. Login en el sistema SSD
     pagina.goto(url_login_ssd)
-    # pagina.goto(url_ssd_local)  # Para pruebas locales, comentar esta línea en producción
     pagina.locator('[name="txtUsuario"]').fill(usuario)
     pagina.locator('[name="txtPass"]').fill(clave)
     pagina.locator('[name="BtnEnviarRut"]').click()
@@ -80,9 +90,7 @@ def procesar_ssd_en_pagina(pagina, datos_excel, usuario, clave):
     for fila, registro in enumerate(datos_excel, start=1):
         rut_raw = str(registro.get('rut', '')).strip()
         guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle="Abriendo formulario de despacho documentos en SSD")
-        print(f"[SSD] Procesando registro {fila}/{total_registros}: RUT {rut_raw}")
 
-        # TODO: Implementar pasos del sistema SSD aquí
 
         frm_main = pagina.frame_locator('frame[name="frmMain"]')
         frm_menu = pagina.frame_locator('frame[name="frmMenu"]')
@@ -99,13 +107,10 @@ def procesar_ssd_en_pagina(pagina, datos_excel, usuario, clave):
     
         popup1 = popup_info1.value
         popup1.wait_for_load_state('domcontentloaded')
-
         popup1.locator('[name="cboServicio"]').select_option('DV')
         popup1.wait_for_load_state('networkidle')
-
         popup1.locator('[name="cboRegion"]').select_option('5')
         popup1.wait_for_load_state('networkidle')
-
         popup1.get_by_title("Click para Seleccionar").click()
 
 
@@ -115,30 +120,51 @@ def procesar_ssd_en_pagina(pagina, datos_excel, usuario, clave):
 
         popup2 = popup_info2.value
         popup2.wait_for_load_state('domcontentloaded')
-
         popup2.locator('[name="cboServicio"]').select_option('DV')
         popup2.wait_for_load_state('networkidle')
-
         popup2.locator('[name="cboRegion"]').select_option('5')
         popup2.wait_for_load_state('networkidle')
-
         popup2.get_by_title("Click para Seleccionar").click()
 
-        guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle="Generando texto de materia y guardando SSD")
         frm_main.locator('[name="Cbo_TipoDocto"]').select_option('57')
 
         # Genera el texto del cometido
+        guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle="Generando texto y rellenando materia en SSD")
         texto_materia = generar_texto_cometido_ssd(registro)
         frm_main.locator('[name="TxtDescripcion"]').fill(texto_materia)
+
+
+        frm_main.locator('[name="TxtDirigido_Des"]').fill("PARTES DRV")
+        with pagina.expect_popup() as popup_info3:
+            frm_main.locator('[name="TxtDirigido_Des"]').press("Enter")
+
+        popup3 = popup_info3.value
+        popup3.wait_for_load_state('domcontentloaded')
+        popup3.locator('[name="cboServicio"]').select_option('DV')
+        popup3.wait_for_load_state('networkidle')
+        popup3.locator('[name="cboRegion"]').select_option('5')
+        popup3.wait_for_load_state('networkidle')
+        popup3.get_by_title("Click para Seleccionar").click()
         
-        # Guarda el documento
+        
+        # Guarda el documento y captura la alerta nativa con el número de proceso
+        numero_capturado.clear()
+        pagina.once("dialog", manejar_dialogo_ssd)
+
         frm_main.locator('[name="Grabar"]').click()
+
+        numero_proceso = numero_capturado.get('numero', '')
+
+        # Guarda el número de proceso en el registro y en disco para compartir con cometidos
+        registro['numero_ssd'] = numero_proceso
+        guardar_datos_automatizacion(datos_excel)
+        guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle=f"N° SSD generado: {numero_proceso}")
+
         time.sleep(1)
 
     guardar_progreso(total_registros, total_registros, "SSD", "completado", detalle="Automatización de SSD finalizada exitosamente")
-    print("[SSD] Automatización de SSD finalizada.")
 
-def ejecutar_ssd(datos_excel=None, pagina=None, headless=False, slow_mo=600):
+def ejecutar_ssd(datos_excel=None, pagina=None, headless=False):
     """
     Punto de entrada para ejecutar la automatización del Sistema SSD.
     Puede ejecutarse independientemente o reutilizando una página de Playwright existente.
@@ -153,7 +179,7 @@ def ejecutar_ssd(datos_excel=None, pagina=None, headless=False, slow_mo=600):
 
     try:
         with sync_playwright() as p:
-            navegador = p.firefox.launch(headless=headless, slow_mo=slow_mo)
+            navegador = p.firefox.launch(headless=headless)
             contexto = navegador.new_context()
             pagina = contexto.new_page()
             procesar_ssd_en_pagina(pagina, datos_excel, usuario, clave)

@@ -22,3 +22,8 @@ test_api.py
 
 # Frontend build generado para Flask
 src/rpacometidos/vue/
+
+# Archivos temporales de automatización
+temp_pdfs/
+*.pdf
+

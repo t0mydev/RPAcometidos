@@ -195,6 +195,8 @@ def empezar_automatizacion():
             dias_40 = registro.get("dias_40")
             dias_35 = registro.get("dias_35")
             tipo_imputacion_presupuestaria = registro.get("tipo_imputacion_presupuestaria")
+            nombre_aprobador = registro.get("nombre_aprobador")
+            nombre_firmantes = registro.get("nombre_firmantes")
             
             # Por defecto aprobado, a menos que falten datos esenciales
             estado = "aprobado"
@@ -220,6 +222,8 @@ def empezar_automatizacion():
                 "dias_40": dias_40 if dias_40 is not None else "",
                 "dias_35": dias_35 if dias_35 is not None else "",
                 "tipo_imputacion_presupuestaria": tipo_imputacion_presupuestaria or "",
+                "nombre_aprobador": nombre_aprobador or "",
+                "nombre_firmantes": nombre_firmantes or "",
                 "accion": estado
             })
             

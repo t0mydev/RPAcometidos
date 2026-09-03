@@ -327,36 +327,39 @@ function comenzarMonitoreoProgreso() {
 
       const data = await resp.json()
       
-      if (data.estado === 'iniciando') {
+      // Muestra todos los mensajes registrados en el historial acumulativo
+      if (data.historial && Array.isArray(data.historial)) {
+        for (const msg of data.historial) {
+          if (!logsAutomatizacion.value.includes(msg)) {
+            await agregarLog(msg)
+          }
+        }
+      } else if (data.estado === 'iniciando') {
         const msg = data.detalle || 'Cargando entorno de Playwright...'
         if (!logsAutomatizacion.value.includes(msg)) {
           await agregarLog(msg)
         }
-      } else if (data.estado === 'ejecutando') {
-        // Mensaje inicial al comenzar un nuevo cometido/fila
-        if (data.paso !== ultimoPasoRegistrado.value) {
-          ultimoPasoRegistrado.value = data.paso
-          await agregarLog(`Cometido ${data.paso} de ${data.total}: Procesando ${data.nombre}`)
-        }
+      }
 
-        // Mensajes siguientes que actualizan la etapa en que va
-        if (data.detalle && ultimoMensajeRegistrado.value !== data.detalle) {
-          ultimoMensajeRegistrado.value = data.detalle
-          await agregarLog(data.detalle)
+      if (data.estado === 'completado') {
+        const finalMsg = '¡Automatización finalizada exitosamente!'
+        if (!logsAutomatizacion.value.includes(finalMsg)) {
+          await agregarLog(finalMsg)
         }
-      } else if (data.estado === 'completado') {
-        await agregarLog('¡Automatización finalizada exitosamente!')
         detenerMonitoreoProgreso()
         automatizando.value = false
       } else if (data.estado === 'error') {
-        await agregarLog(`Error durante la automatización: ${data.nombre || 'Desconocido'}`)
+        const errorMsg = `Error durante la automatización: ${data.nombre || 'Desconocido'}`
+        if (!logsAutomatizacion.value.includes(errorMsg)) {
+          await agregarLog(errorMsg)
+        }
         detenerMonitoreoProgreso()
         automatizando.value = false
       }
     } catch (e) {
       console.error('Error al consultar el progreso:', e)
     }
-  }, 1000)
+  }, 100)
 }
 
 function detenerMonitoreoProgreso() {
@@ -395,7 +398,9 @@ async function empezarAutomatizacion() {
       dias_50: f.dias_50,
       dias_40: f.dias_40,
       dias_35: f.dias_35,
-      tipo_imputacion_presupuestaria: f.tipo_imputacion_presupuestaria
+      tipo_imputacion_presupuestaria: f.tipo_imputacion_presupuestaria,
+      nombre_aprobador: f.nombre_aprobador,
+      nombre_firmantes: f.nombre_firmantes
     }))
 
     const resp = await fetch('/api/empezar-automatizacion', {

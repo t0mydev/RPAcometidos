@@ -10,7 +10,7 @@ from rpacometidos.robots.robot_cometidos import procesar_cometidos_en_pagina
 from rpacometidos.robots.robot_ssd import procesar_ssd_en_pagina
 from rpacometidos.robots.robot_firmador import procesar_firmador_en_pagina
 
-def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=0):
+def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=600):
     """
     Orquestador principal: abre UNA SOLA ventana de navegador y ejecuta
     los robots en pestañas (páginas) separadas compartiendo el mismo contexto.
@@ -35,7 +35,7 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=0):
             # Pestaña para Cometidos
             pagina_cometidos = contexto.new_page()
             # Pestaña para Firmador
-            pagina_firmador = contexto.new_page()
+            #pagina_firmador = contexto.new_page()
             
 
             # 3. Ejecuta los flujos
@@ -46,7 +46,7 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=0):
             procesar_cometidos_en_pagina(pagina_cometidos, datos_excel, usuario_cometidos, clave_cometidos)
 
             # Luego Firmador
-            procesar_firmador_en_pagina(pagina_firmador, datos_excel, usuario_firmador, clave_firmador)
+            #procesar_firmador_en_pagina(pagina_firmador, datos_excel, usuario_firmador, clave_firmador)
 
             navegador.close()
 

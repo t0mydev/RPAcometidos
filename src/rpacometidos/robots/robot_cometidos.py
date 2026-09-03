@@ -1,4 +1,5 @@
 import time
+from datetime import datetime, timedelta
 from playwright.sync_api import sync_playwright
 from rpacometidos.robots.base import (
     guardar_progreso,
@@ -46,28 +47,24 @@ def procesar_cometidos_en_pagina(pagina, datos_excel, usuario, clave):
         guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle="Rellenando fechas y Considerando")
 
         # 3. Rellena fecha inicio y fecha término
-        fecha_inicio = str(registro.get('fechainicio', '')).strip()
-        fecha_termino = str(registro.get('fechatermino', '')).strip()
+        fecha_inicio_raw = str(registro.get('fechainicio', '')).strip()
+        fecha_termino_raw = str(registro.get('fechatermino', '')).strip()
+        fecha_inicio = fecha_inicio_raw
+        fecha_termino = fecha_termino_raw
 
-        dia_inicio = 0
-        dia_termino = 0
         if "/" in fecha_inicio:
             d1, m1, a1 = fecha_inicio.split("/")
             fecha_inicio = f"{m1}{d1}{a1}"
-            dia_inicio = int(d1)
         elif "-" in fecha_inicio:
             d1, m1, a1 = fecha_inicio.split("-")
             fecha_inicio = f"{m1}{d1}{a1}"
-            dia_inicio = int(d1)
 
         if "/" in fecha_termino:
             d2, m2, a2 = fecha_termino.split("/")
             fecha_termino = f"{m2}{d2}{a2}"
-            dia_termino = int(d2)
         elif "-" in fecha_termino:
             d2, m2, a2 = fecha_termino.split("-")
             fecha_termino = f"{m2}{d2}{a2}"
-            dia_termino = int(d2)
 
         pagina.locator('#txtFechaInicio').click()
         pagina.locator('#txtFechaInicio').press_sequentially(fecha_inicio)
@@ -88,10 +85,16 @@ def procesar_cometidos_en_pagina(pagina, datos_excel, usuario, clave):
             partes_personal = [p.strip() for p in personal_raw.split("-")] if personal_raw else []
 
             dias_lista = []
-            if dia_inicio and dia_termino and dia_inicio <= dia_termino:
-                dias_lista = list(range(dia_inicio, dia_termino + 1))
-            elif dia_inicio:
-                dias_lista = [dia_inicio]
+            try:
+                sep_ini = "/" if "/" in fecha_inicio_raw else "-"
+                sep_ter = "/" if "/" in fecha_termino_raw else "-"
+                curr = datetime.strptime(fecha_inicio_raw, f"%d{sep_ini}%m{sep_ini}%Y")
+                fin = datetime.strptime(fecha_termino_raw, f"%d{sep_ter}%m{sep_ter}%Y")
+                while curr <= fin:
+                    dias_lista.append(curr.day)
+                    curr += timedelta(days=1)
+            except Exception:
+                pass
 
             partes_considerando = [f"SIGLA {sigla_val}"]
             if dias_lista:

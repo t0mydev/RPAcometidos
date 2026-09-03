@@ -3,17 +3,19 @@ from playwright.sync_api import sync_playwright
 from rpacometidos.robots.base import (
     guardar_progreso,
     cargar_datos_automatizacion,
-    cargar_credenciales
+    guardar_datos_automatizacion,
+    cargar_credenciales,
+    obtener_ruta_pdf_temporal
 )
 
 def procesar_cometidos_en_pagina(pagina, datos_excel, usuario, clave):
     """
     Ejecuta el flujo de cometidos dentro de una página (pestaña) de Playwright.
     """
-    #url_login_personal = "https://personal.mop.gob.cl"
-    #url_cometido = "https://personal.mop.gob.cl/Viatico/FormCreaViatico"
-    url_login_personal = "file:///home/r0ars/Downloads/Portal%20Personal/Acceso%20__%20Sistema%20de%20Recursos%20Humanos%20__.html"
-    url_cometido = "file:///home/r0ars/Downloads/Portal%20Personal/Crear%20Cometido%20Individual%20__%20Sistema%20de%20Recursos%20Humanos%20__.html"
+    url_login_personal = "https://personal.mop.gob.cl"
+    url_cometido = "https://personal.mop.gob.cl/Viatico/FormCreaViatico"
+    #url_login_personal = "file:///home/r0ars/Downloads/Portal%20Personal/Acceso%20__%20Sistema%20de%20Recursos%20Humanos%20__.html"
+    #url_cometido = "file:///home/r0ars/Downloads/test_descarga_pdf.html"
 
     total_registros = len(datos_excel)
 
@@ -29,7 +31,6 @@ def procesar_cometidos_en_pagina(pagina, datos_excel, usuario, clave):
     for fila, registro in enumerate(datos_excel, start=1):
         rut_raw = str(registro.get('rut', '')).strip()
         guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle="Buscando funcionario")
-        print(f"[Cometidos] Procesando registro {fila}/{total_registros}: RUT {rut_raw}")
 
         # Navega a la vista de crear cometido
         pagina.goto(url_cometido)
@@ -132,14 +133,15 @@ def procesar_cometidos_en_pagina(pagina, datos_excel, usuario, clave):
             if region:
                 try:
                     pagina.get_by_label(region, exact=False).check()
-                except Exception as e:
-                    print(f"No se pudo marcar la región '{region}': {e}")
+                except Exception:
+                    pass
 
         # 11. Busca y selecciona Atribución
         guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle="Seleccionando Atribución y TD5")
         pagina.locator('#btnModalConfiere').click()
         pagina.wait_for_load_state('networkidle')
-        pagina.locator('#txtConfiereM').press_sequentially(str(registro.get('atribucion', '')).strip())
+        pagina.locator('#txtConfiereM').press_sequentially(str(registro.get('atribucion', '')).strip(), delay=40)
+        pagina.wait_for_function("Array.from(document.querySelectorAll('#btnSeleccionaConfiere')).filter(b => b.offsetParent !== null).length === 1")
         pagina.locator('#btnSeleccionaConfiere:visible').click()
 
         # 12. Busca y selecciona TD5
@@ -167,8 +169,8 @@ def procesar_cometidos_en_pagina(pagina, datos_excel, usuario, clave):
             for sel in checklist:
                 try:
                     pagina.locator(f'#{sel}').check()
-                except Exception as e:
-                    print(f"No se pudo marcar el selector '{sel}': {e}")
+                except Exception:
+                    pass
 
         pagina.locator('#btnGrabaCalendario').click()
 
@@ -206,20 +208,39 @@ def procesar_cometidos_en_pagina(pagina, datos_excel, usuario, clave):
                 # Para hacer clic en la opción CODIGO:
                 pagina.locator("button[onclick*='CODIGO']").click()
 
-        # 16. Número Proceso SSD (se integrará con robot_ssd)
-        # time.sleep(2)
-        # pagina.locator('#txtNumeroProceso').fill(registro.get('numero_ssd', ''))
+        # 16. Número Proceso SSD (obtenido desde robot_ssd)
+        numero_ssd = str(registro.get('numero_ssd', '')).strip()
+        if numero_ssd:
+            guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle=f"Ingresando N° SSD: {numero_ssd}")
+            pagina.locator('#txtNumeroProceso').fill(numero_ssd)
 
-        # 17. Guardar cometido
-        # pagina.locator('#btnGrabarViatico').click()
-        # pagina.wait_for_load_state('networkidle')
+        # 17. Guardar cometido y descargar PDF
+        guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle="Guardando cometido y descargando PDF")
+        pagina.locator('button#btnGrabarViatico', has_text="Grabar Cometido").click()
+
+        # Espera el aviso modal de éxito y presiona Cerrar
+        modal = pagina.locator('#mensajeModal')
+        modal.wait_for(state="visible")
+        modal.locator('button', has_text="Cerrar").click()
+        modal.wait_for(state="hidden")
+
+        # Captura la descarga del PDF al hacer clic en Imprimir Cometido
+        with pagina.expect_download() as download_info:
+            pagina.locator('#btnImprimirViatico').click()
+
+        descarga = download_info.value
+        ruta_pdf = obtener_ruta_pdf_temporal(f"cometido_{rut_raw}.pdf")
+        descarga.save_as(ruta_pdf)
+
+        registro['ruta_pdf'] = str(ruta_pdf)
+        guardar_datos_automatizacion(datos_excel)
+        guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle="Cometido guardado y PDF descargado")
 
         time.sleep(2)
 
     guardar_progreso(total_registros, total_registros, "Cometidos", "completado", detalle="Automatización de cometidos finalizada exitosamente")
-    print("[Cometidos] Automatización finalizada exitosamente.")
 
-def ejecutar_cometidos(datos_excel=None, pagina=None, headless=False, slow_mo=600):
+def ejecutar_cometidos(datos_excel=None, pagina=None, headless=False):
     """
     Punto de entrada para ejecutar la automatización de cometidos.
     Puede ejecutarse independientemente o reutilizando una página de Playwright existente.
@@ -234,7 +255,7 @@ def ejecutar_cometidos(datos_excel=None, pagina=None, headless=False, slow_mo=60
 
     try:
         with sync_playwright() as p:
-            navegador = p.firefox.launch(headless=headless, slow_mo=slow_mo)
+            navegador = p.firefox.launch(headless=headless)
             contexto = navegador.new_context()
             pagina = contexto.new_page()
             procesar_cometidos_en_pagina(pagina, datos_excel, usuario, clave)

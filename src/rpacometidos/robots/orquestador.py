@@ -46,7 +46,7 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=600):
             procesar_cometidos_en_pagina(pagina_cometidos, datos_excel, usuario_cometidos, clave_cometidos)
 
             # Luego Firmador
-            #procesar_firmador_en_pagina(pagina_firmador, datos_excel, usuario_firmador, clave_firmador)
+            procesar_firmador_en_pagina(pagina_firmador, datos_excel, usuario_firmador, clave_firmador)
 
             navegador.close()
 

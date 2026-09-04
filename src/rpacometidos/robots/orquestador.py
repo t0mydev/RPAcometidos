@@ -31,16 +31,16 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=600):
 
             # 2. Crea las pestañas necesarias
             # Pestaña para SSD
-            #pagina_ssd = contexto.new_page()
+            pagina_ssd = contexto.new_page()
             # Pestaña para Cometidos
             pagina_cometidos = contexto.new_page()
             # Pestaña para Firmador
-            #pagina_firmador = contexto.new_page()
+            pagina_firmador = contexto.new_page()
             
 
             # 3. Ejecuta los flujos
             # Primero SSD, necesita generar el número de proceso
-            #procesar_ssd_en_pagina(pagina_ssd, datos_excel, usuario_ssd, clave_ssd)
+            procesar_ssd_en_pagina(pagina_ssd, datos_excel, usuario_ssd, clave_ssd)
 
             # Luego Cometidos
             procesar_cometidos_en_pagina(pagina_cometidos, datos_excel, usuario_cometidos, clave_cometidos)

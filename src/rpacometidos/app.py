@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, jsonify, send_file
 from rpacometidos.lector_excel import procesar_planilla_completa
 import json
 import io
+import csv
 import openpyxl
 import os
 from pathlib import Path
@@ -281,6 +282,105 @@ def obtener_credenciales():
             return jsonify({"status": "completado", "credenciales": {}}), 200
     except Exception as e:
         return jsonify({"status": "error", "mensaje": f"Error al leer credenciales: {str(e)}"}), 500
+
+# ──────────────────────────────────────────────────────────────
+# Endpoints CRUD para datos_conocidos.csv
+# ──────────────────────────────────────────────────────────────
+
+PATH_DATOS_CONOCIDOS = BASE_DIR / "datos_conocidos.csv"
+COLUMNAS_CSV = ["rut", "nombre", "sigla"]
+
+def _leer_csv():
+    """Lee datos_conocidos.csv y devuelve una lista de dicts."""
+    if not PATH_DATOS_CONOCIDOS.exists():
+        return []
+    with open(PATH_DATOS_CONOCIDOS, newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+def _escribir_csv(registros):
+    """Escribe la lista de dicts en datos_conocidos.csv."""
+    with open(PATH_DATOS_CONOCIDOS, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=COLUMNAS_CSV)
+        writer.writeheader()
+        writer.writerows(registros)
+
+@app.route("/api/datos-conocidos", methods=["GET"])
+def obtener_datos_conocidos():
+    """Devuelve todos los registros del CSV."""
+    try:
+        return jsonify({"status": "completado", "datos": _leer_csv()}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "mensaje": str(e)}), 500
+
+@app.route("/api/datos-conocidos", methods=["POST"])
+def agregar_dato_conocido():
+    """Agrega un nuevo registro. Rechaza si el RUT ya existe."""
+    try:
+        nuevo = request.get_json() or {}
+        rut    = str(nuevo.get("rut", "")).strip()
+        nombre = str(nuevo.get("nombre", "")).strip().upper()
+        sigla  = str(nuevo.get("sigla", "")).strip().upper()
+
+        if not rut or not nombre or not sigla:
+            return jsonify({"status": "error", "mensaje": "Todos los campos son obligatorios."}), 400
+
+        registros = _leer_csv()
+        if any(r["rut"] == rut for r in registros):
+            return jsonify({"status": "error", "mensaje": f"El RUT {rut} ya existe."}), 409
+
+        registros.append({"rut": rut, "nombre": nombre, "sigla": sigla})
+        _escribir_csv(registros)
+        return jsonify({"status": "completado", "mensaje": "Registro agregado correctamente."}), 201
+    except Exception as e:
+        return jsonify({"status": "error", "mensaje": str(e)}), 500
+
+@app.route("/api/datos-conocidos/<rut_original>", methods=["PUT"])
+def editar_dato_conocido(rut_original):
+    """Edita un registro existente identificado por su RUT."""
+    try:
+        datos = request.get_json() or {}
+        nuevo_rut    = str(datos.get("rut", "")).strip()
+        nuevo_nombre = str(datos.get("nombre", "")).strip().upper()
+        nueva_sigla  = str(datos.get("sigla", "")).strip().upper()
+
+        if not nuevo_rut or not nuevo_nombre or not nueva_sigla:
+            return jsonify({"status": "error", "mensaje": "Todos los campos son obligatorios."}), 400
+
+        registros = _leer_csv()
+        encontrado = False
+        for r in registros:
+            if r["rut"] == rut_original:
+                # Si el RUT cambió, verificar que el nuevo no esté duplicado
+                if nuevo_rut != rut_original and any(x["rut"] == nuevo_rut for x in registros):
+                    return jsonify({"status": "error", "mensaje": f"El RUT {nuevo_rut} ya existe en otro registro."}), 409
+                r["rut"]    = nuevo_rut
+                r["nombre"] = nuevo_nombre
+                r["sigla"]  = nueva_sigla
+                encontrado = True
+                break
+
+        if not encontrado:
+            return jsonify({"status": "error", "mensaje": f"No se encontró el RUT {rut_original}."}), 404
+
+        _escribir_csv(registros)
+        return jsonify({"status": "completado", "mensaje": "Registro actualizado correctamente."}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "mensaje": str(e)}), 500
+
+@app.route("/api/datos-conocidos/<rut>", methods=["DELETE"])
+def eliminar_dato_conocido(rut):
+    """Elimina el registro con el RUT indicado."""
+    try:
+        registros = _leer_csv()
+        nuevos = [r for r in registros if r["rut"] != rut]
+
+        if len(nuevos) == len(registros):
+            return jsonify({"status": "error", "mensaje": f"No se encontró el RUT {rut}."}), 404
+
+        _escribir_csv(nuevos)
+        return jsonify({"status": "completado", "mensaje": "Registro eliminado correctamente."}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "mensaje": str(e)}), 500
 
 
 if __name__ == '__main__':

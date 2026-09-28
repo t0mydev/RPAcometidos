@@ -223,8 +223,19 @@ const handleProcess = () => {
 <template>
   <div class="home-container d-flex flex-column align-items-center justify-content-start">
 
-    <!-- ─── Botón "Cuentas de Usuario" (esquina superior derecha) ─── -->
+    <!-- ─── Botones de cabecera (esquina superior derecha) ─── -->
     <div class="cuentas-wrapper">
+      <!-- Botón Padrón de Conductores -->
+      <button
+        class="btn btn-outline-primary btn-cuentas me-2"
+        @click="router.push({ name: 'EdicionDatos' })"
+        title="Gestionar padrón de conductores y matrículas"
+      >
+        <i class="bi bi-person-lines-fill me-2"></i>
+        Padrón de Conductores
+      </button>
+
+      <!-- Botón Cuentas de Usuario -->
       <button class="btn btn-outline-primary btn-cuentas" @click="toggleMenu" id="btn-cuentas-usuario">
         <i class="bi bi-person-fill-gear me-2"></i>
         Cuentas de Usuario
@@ -401,6 +412,8 @@ const handleProcess = () => {
   top: 16px;
   right: 24px;
   z-index: 100;
+  display: flex;
+  align-items: center;
 }
 
 .btn-cuentas {

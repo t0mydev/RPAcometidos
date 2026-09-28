@@ -155,6 +155,21 @@ async function confirmarEliminar() {
   }
 }
 
+// ─── Formateo de RUT chileno (solo visualización) ────────────
+// Toma el último dígito como DV y aplica puntos al resto.
+// Si el RUT no cumple el patrón esperado (RUTs de prueba, etc.) lo devuelve sin cambios.
+function formatearRut(rut) {
+  const str = String(rut).trim()
+  // Acepta 7-9 caracteres: dígitos, con el último siendo 0-9 o K
+  if (!/^\d{6,8}[0-9Kk]$/.test(str)) return str
+
+  const dv     = str.slice(-1).toUpperCase()
+  const cuerpo = str.slice(0, -1)
+  // Inserta punto cada 3 dígitos desde la derecha
+  const cuerpoFormateado = cuerpo.replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+  return `${cuerpoFormateado}-${dv}`
+}
+
 // ─── Navegación ───────────────────────────────────────────────
 function volverAlInicio() {
   router.push({ name: 'Home' })
@@ -224,7 +239,7 @@ function volverAlInicio() {
         <tbody>
           <tr v-for="(c, idx) in conductoresFiltrados" :key="c.rut" :class="{ 'fila-par': idx % 2 === 0 }">
             <td class="col-rut">
-              <span class="badge-rut">{{ c.rut }}</span>
+              <span class="badge-rut">{{ formatearRut(c.rut) }}</span>
             </td>
             <td class="col-nombre">{{ c.nombre }}</td>
             <td class="col-sigla">
@@ -357,7 +372,7 @@ function volverAlInicio() {
           <div class="modal-cuerpo" v-if="eliminandoRut">
             <p class="mb-1">¿Estás seguro de eliminar al siguiente conductor?</p>
             <div class="confirm-detalle">
-              <span class="badge-rut">{{ eliminandoRut.rut }}</span>
+              <span class="badge-rut">{{ formatearRut(eliminandoRut.rut) }}</span>
               <strong class="ms-2">{{ eliminandoRut.nombre }}</strong>
               <span class="badge-sigla ms-2">{{ eliminandoRut.sigla }}</span>
             </div>
@@ -530,9 +545,9 @@ function volverAlInicio() {
 }
 
 /* Columnas */
-.col-rut      { width: 140px; }
+.col-rut      { width: 180px; }
 .col-nombre   { min-width: 200px; }
-.col-sigla    { width: 160px; }
+.col-sigla    { width: 190px; }
 .col-acciones { width: 110px; text-align: center; }
 
 /* Badges */
@@ -541,12 +556,13 @@ function volverAlInicio() {
   background-color: #eaf3ff;
   color: var(--color-primary);
   border: 1px solid #b3d4f0;
-  border-radius: 4px;
-  padding: 2px 8px;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
   font-family: 'Courier New', monospace;
+  white-space: nowrap;
 }
 
 .badge-sigla {
@@ -554,12 +570,13 @@ function volverAlInicio() {
   background-color: #f0f4f8;
   color: var(--color-dark-gray);
   border: 1px solid #d0dae3;
-  border-radius: 4px;
-  padding: 2px 8px;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
   font-family: 'Courier New', monospace;
+  white-space: nowrap;
 }
 
 /* Acciones */

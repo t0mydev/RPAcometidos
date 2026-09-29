@@ -182,8 +182,9 @@ function volverAlInicio() {
     <!-- ── Encabezado ── -->
     <div class="edicion-header">
       <div class="header-izq">
-        <button class="btn btn-outline-primary btn-sm btn-volver" @click="volverAlInicio">
-          <i class="bi bi-arrow-left me-1"></i> Volver
+        <!-- Botón Volver: encima del título -->
+        <button class="btn btn-outline-primary btn-volver" @click="volverAlInicio">
+          <i class="bi bi-arrow-left me-2"></i>Volver al inicio
         </button>
         <div class="header-texto">
           <h1 class="edicion-titulo">Padrón de Conductores</h1>
@@ -418,14 +419,16 @@ function volverAlInicio() {
 
 .header-izq {
   display: flex;
+  flex-direction: column;
   align-items: flex-start;
-  gap: 16px;
+  gap: 12px;
 }
 
 .btn-volver {
-  margin-top: 8px;
+  padding: 8px 20px;
+  font-size: 15px;
+  font-weight: 600;
   white-space: nowrap;
-  flex-shrink: 0;
 }
 
 .header-texto {
@@ -446,7 +449,7 @@ function volverAlInicio() {
   font-size: 15px;
   color: var(--color-mid-gray);
   margin: 0;
-  max-width: 520px;
+  max-width: 580px;
 }
 
 .btn-agregar {

@@ -13,13 +13,15 @@ def agregar_persona_firmador(pagina, nombre, rol):
     """
     Agrega una persona con su respectivo rol en el formulario del Firmador.
     """
-    nombre_limpio = str(nombre or '').strip()
+    nombre_limpio = str(nombre or '').strip().upper()
     if not nombre_limpio:
         return
 
     input_resp = pagina.locator('input[placeholder="Seleccione Responsable..."]')
     input_resp.click()
-    input_resp.press_sequentially(nombre_limpio)
+    pagina.wait_for_timeout(50)
+    input_resp.press_sequentially(nombre_limpio, delay=10)
+    pagina.wait_for_timeout(300)  # Espera un momento para que aparezcan las sugerencias
     input_resp.press("Enter")
 
     pagina.locator('#ddl_Rol').select_option(rol)
@@ -36,6 +38,7 @@ def login_firmador(pagina, usuario, clave):
     pagina.locator('#inp_usr').fill(usuario)
     pagina.locator('#inp_pass').fill(clave)
     pagina.locator('#btnLogin').click()
+    pagina.wait_for_url(lambda u: u.strip("/") != url_login_firmador.strip("/"), timeout=15000)
     pagina.wait_for_load_state('networkidle')
 
 def procesar_un_firmador(pagina, registro, fila=1, total_registros=1):
@@ -109,7 +112,7 @@ def procesar_un_firmador(pagina, registro, fila=1, total_registros=1):
     pagina.locator('#ddl_OficinaPartes_nom').select_option('456')
 
     # Confirma la creación del flujo
-    #pagina.locator('#btnConfCreaFlujo').click()
+    pagina.locator('#btnConfCreaFlujo').click()
     pagina.wait_for_load_state('networkidle')
 
     time.sleep(2)

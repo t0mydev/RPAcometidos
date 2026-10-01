@@ -104,7 +104,7 @@ def procesar_un_cometido(pagina, registro, fila=1, total_registros=1):
                 if i < len(partes_personal) and partes_personal[i]:
                     partes_considerando.append(partes_personal[i])
 
-        texto_considerando = " ".join(partes_considerando).strip()
+        texto_considerando = " ".join(partes_considerando).strip().upper()
 
     pagina.locator('#txtConsiderando').fill(texto_considerando)
 
@@ -189,13 +189,13 @@ def procesar_un_cometido(pagina, registro, fila=1, total_registros=1):
     pagina.get_by_title("Buscar Asignación Td5").click()
     pagina.wait_for_load_state('networkidle')
 
-    tipo_imputacion = str(registro.get('tipo_imputacion_presupuestaria', '')).strip() or registro.get('tipo_imputacion_presupuestaria', '').strip()
+    tipo_imputacion = str(registro.get('tipo_imputacion_presupuestaria', '')).strip().upper() or registro.get('tipo_imputacion_presupuestaria', '').strip().upper()
 
     if tipo_imputacion:
-        if tipo_imputacion == "Contrata":
+        if tipo_imputacion == "CONTRATA":
             # Para hacer clic en la opción CONTRATA:
             pagina.locator("button[onclick*='CONTRATA']").click()
-        elif tipo_imputacion == "Codigo del trabajo":
+        elif tipo_imputacion == "CODIGO DEL TRABAJO":
             # Para hacer clic en la opción CODIGO:
             pagina.locator("button[onclick*='CODIGO']").click()
 

@@ -11,7 +11,7 @@ from rpacometidos.robots.robot_ssd import login_ssd, procesar_un_ssd
 from rpacometidos.robots.robot_cometidos import login_cometidos, procesar_un_cometido
 from rpacometidos.robots.robot_firmador import login_firmador, procesar_un_firmador
 
-def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=100):
+def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=400):
     """
     Orquestador principal: abre UNA SOLA ventana de navegador y ejecuta
     los robots en pestañas separadas compartiendo el mismo contexto,

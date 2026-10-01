@@ -141,6 +141,8 @@ async function iniciarEjecucion() {
       dias_40: f.dias_40,
       dias_35: f.dias_35,
       tipo_imputacion_presupuestaria: f.tipo_imputacion_presupuestaria,
+      nombre_aprobador: f.nombre_aprobador,
+      nombre_firmantes: f.nombre_firmantes,
     }))
 
     const resp = await fetch('/api/empezar-automatizacion', {

@@ -123,31 +123,29 @@ def procesar_planilla_completa(archivo_excel):
         datos_fila = {
             "rut": rut,
             "sigla": sigla,
+            "fechainicio": fechainicio,
+            "fechatermino": fechatermino,
+            "dias_salida": dias_salida,
+            "dias_100": dias_100,
+            "dias_70": dias_70,
+            "dias_60": dias_60,
+            "dias_50": dias_50,
+            "dias_40": dias_40,
+            "dias_35": dias_35,
+            "tipo_movilizacion": tipo_movilizacion,
+            "lugar_cometido": lugar_cometido,
+            "region_principal": region_principal,
+            "regiones": regiones,
+            "personal_trasladado": personal_trasladado,
+            "nombre_aprobador": nombre_aprobador,
+            "nombre_firmantes": nombre_firmantes,
+            "tipo_imputacion_presupuestaria": tipo_imputacion_presupuestaria,
+            "fallback_considerando": fallback_considerando,
+            "atribucion": atribucion,
         }
         
         resultado_fila = validar_registro(datos_fila)
-        
-        resultado_fila["rut"] = rut
-        resultado_fila["sigla"] = sigla
-        resultado_fila["fechainicio"] = fechainicio
-        resultado_fila["fechatermino"] = fechatermino
-        resultado_fila["tipo_movilizacion"] = tipo_movilizacion
-        resultado_fila["lugar_cometido"] = lugar_cometido
-        resultado_fila["region_principal"] = region_principal
-        resultado_fila["regiones"] = regiones
-        resultado_fila["personal_trasladado"] = personal_trasladado
-        resultado_fila["nombre_aprobador"] = nombre_aprobador
-        resultado_fila["nombre_firmantes"] = nombre_firmantes
-        resultado_fila["tipo_imputacion_presupuestaria"] = tipo_imputacion_presupuestaria
-        resultado_fila["fallback_considerando"] = fallback_considerando
-        resultado_fila["atribucion"] = atribucion
-        resultado_fila["dias_salida"] = dias_salida
-        resultado_fila["dias_100"] = dias_100
-        resultado_fila["dias_70"] = dias_70
-        resultado_fila["dias_60"] = dias_60
-        resultado_fila["dias_50"] = dias_50
-        resultado_fila["dias_40"] = dias_40
-        resultado_fila["dias_35"] = dias_35
+        resultado_fila.update(datos_fila)
         resultado_fila["numero_fila_excel"] = fila_indice
 
         reporte_final.append(resultado_fila)

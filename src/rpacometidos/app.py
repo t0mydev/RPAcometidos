@@ -1,9 +1,17 @@
 from flask import Flask, render_template, request, jsonify, send_file
 from rpacometidos.lector_excel import procesar_planilla_completa
+from rpacometidos.procesador_datos import (
+    obtener_datos_conocidos,
+    agregar_dato_conocido,
+    editar_dato_conocido,
+    eliminar_dato_conocido,
+)
 import json
 import io
 import openpyxl
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 # Raíz del proyecto
@@ -51,91 +59,46 @@ def descargar_excel_corregido():
         # Mapea los encabezados para saber las columnas a modificar
         from rpacometidos.lector_excel import (
             buscar_columna,
-            HEADER_RUT,
-            HEADER_SIGLA,
-            HEADER_TIPO_MOVILIZACION,
-            HEADER_LUGAR_COMETIDO,
-            HEADER_REGION_PRINCIPAL,
-            HEADER_REGIONES,
-            HEADER_PERSONAL_TRASLADADO,
-            HEADER_NOMBRE_APROBADOR,
-            HEADER_NOMBRE_FIRMANTES,
-            HEADER_TIPO_IMPUTACION_PRESUPUESTARIA,
-            HEADER_FALLBACK_CONSIDERANDO,
-            HEADER_ATRIBUCION_ACTUAL,
-            HEADER_DIAS_SALIDA,
-            HEADER_DIAS_100,
-            HEADER_DIAS_70,
-            HEADER_DIAS_60,
-            HEADER_DIAS_50,
-            HEADER_DIAS_40,
-            HEADER_DIAS_35
+            HEADER_RUT, HEADER_SIGLA, HEADER_TIPO_MOVILIZACION,
+            HEADER_LUGAR_COMETIDO, HEADER_REGION_PRINCIPAL, HEADER_REGIONES,
+            HEADER_PERSONAL_TRASLADADO, HEADER_NOMBRE_APROBADOR, HEADER_NOMBRE_FIRMANTES,
+            HEADER_TIPO_IMPUTACION_PRESUPUESTARIA, HEADER_FALLBACK_CONSIDERANDO,
+            HEADER_ATRIBUCION_ACTUAL, HEADER_DIAS_SALIDA, HEADER_DIAS_100,
+            HEADER_DIAS_70, HEADER_DIAS_60, HEADER_DIAS_50, HEADER_DIAS_40, HEADER_DIAS_35
         )
         encabezados = {celda.value: celda.column for celda in hoja[2] if celda.value} or {celda.value: celda.column for celda in hoja[1] if celda.value}
-        col_rut = buscar_columna(encabezados, HEADER_RUT)
-        col_sigla = buscar_columna(encabezados, HEADER_SIGLA)
-        col_tipo_movilizacion = buscar_columna(encabezados, HEADER_TIPO_MOVILIZACION)
-        col_lugar_cometido = buscar_columna(encabezados, HEADER_LUGAR_COMETIDO)
-        col_region_principal = buscar_columna(encabezados, HEADER_REGION_PRINCIPAL)
-        col_regiones = buscar_columna(encabezados, HEADER_REGIONES)
-        col_personal_trasladado = buscar_columna(encabezados, HEADER_PERSONAL_TRASLADADO)
-        col_nombre_aprobador = buscar_columna(encabezados, HEADER_NOMBRE_APROBADOR)
-        col_nombre_firmantes = buscar_columna(encabezados, HEADER_NOMBRE_FIRMANTES)
-        col_tipo_imputacion_presupuestaria = buscar_columna(encabezados, HEADER_TIPO_IMPUTACION_PRESUPUESTARIA)
-        col_fallback_considerando = buscar_columna(encabezados, HEADER_FALLBACK_CONSIDERANDO)
-        col_atribucion = buscar_columna(encabezados, HEADER_ATRIBUCION_ACTUAL)
-        col_dias_salida = buscar_columna(encabezados, HEADER_DIAS_SALIDA)
-        col_dias_100 = buscar_columna(encabezados, HEADER_DIAS_100)
-        col_dias_70 = buscar_columna(encabezados, HEADER_DIAS_70)
-        col_dias_60 = buscar_columna(encabezados, HEADER_DIAS_60)
-        col_dias_50 = buscar_columna(encabezados, HEADER_DIAS_50)
-        col_dias_40 = buscar_columna(encabezados, HEADER_DIAS_40)
-        col_dias_35 = buscar_columna(encabezados, HEADER_DIAS_35)
+
+        COLUMNAS = [
+            ("rut",                          HEADER_RUT),
+            ("sigla",                        HEADER_SIGLA),
+            ("tipo_movilizacion",            HEADER_TIPO_MOVILIZACION),
+            ("lugar_cometido",               HEADER_LUGAR_COMETIDO),
+            ("region_principal",             HEADER_REGION_PRINCIPAL),
+            ("regiones",                     HEADER_REGIONES),
+            ("personal_trasladado",          HEADER_PERSONAL_TRASLADADO),
+            ("nombre_aprobador",             HEADER_NOMBRE_APROBADOR),
+            ("nombre_firmantes",             HEADER_NOMBRE_FIRMANTES),
+            ("tipo_imputacion_presupuestaria", HEADER_TIPO_IMPUTACION_PRESUPUESTARIA),
+            ("fallback_considerando",        HEADER_FALLBACK_CONSIDERANDO),
+            ("atribucion",                   HEADER_ATRIBUCION_ACTUAL),
+            ("dias_salida",                  HEADER_DIAS_SALIDA),
+            ("dias_100",                     HEADER_DIAS_100),
+            ("dias_70",                      HEADER_DIAS_70),
+            ("dias_60",                      HEADER_DIAS_60),
+            ("dias_50",                      HEADER_DIAS_50),
+            ("dias_40",                      HEADER_DIAS_40),
+            ("dias_35",                      HEADER_DIAS_35),
+        ]
+        col_map = {campo: buscar_columna(encabezados, header) for campo, header in COLUMNAS}
 
         # Modifica los valores
         for registro in datos_corregidos:
             fila_indice = registro.get("numero_fila_excel")
             if not fila_indice:
                 continue
-            
-            if col_rut and "rut" in registro:
-                hoja.cell(row=fila_indice, column=col_rut).value = registro["rut"]
-            if col_sigla and "sigla" in registro:
-                hoja.cell(row=fila_indice, column=col_sigla).value = registro["sigla"]
-            if col_tipo_movilizacion and "tipo_movilizacion" in registro:
-                hoja.cell(row=fila_indice, column=col_tipo_movilizacion).value = registro["tipo_movilizacion"]
-            if col_lugar_cometido and "lugar_cometido" in registro:
-                hoja.cell(row=fila_indice, column=col_lugar_cometido).value = registro["lugar_cometido"]
-            if col_region_principal and "region_principal" in registro:
-                hoja.cell(row=fila_indice, column=col_region_principal).value = registro["region_principal"]
-            if col_regiones and "regiones" in registro:
-                hoja.cell(row=fila_indice, column=col_regiones).value = registro["regiones"]
-            if col_personal_trasladado and "personal_trasladado" in registro:
-                hoja.cell(row=fila_indice, column=col_personal_trasladado).value = registro["personal_trasladado"]
-            if col_nombre_aprobador and "nombre_aprobador" in registro:
-                hoja.cell(row=fila_indice, column=col_nombre_aprobador).value = registro["nombre_aprobador"]
-            if col_nombre_firmantes and "nombre_firmantes" in registro:
-                hoja.cell(row=fila_indice, column=col_nombre_firmantes).value = registro["nombre_firmantes"]
-            if col_tipo_imputacion_presupuestaria and "tipo_imputacion_presupuestaria" in registro:
-                hoja.cell(row=fila_indice, column=col_tipo_imputacion_presupuestaria).value = registro["tipo_imputacion_presupuestaria"]
-            if col_fallback_considerando and "fallback_considerando" in registro:
-                hoja.cell(row=fila_indice, column=col_fallback_considerando).value = registro["fallback_considerando"]
-            if col_atribucion and "atribucion" in registro:
-                hoja.cell(row=fila_indice, column=col_atribucion).value = registro["atribucion"]
-            if col_dias_salida and "dias_salida" in registro:
-                hoja.cell(row=fila_indice, column=col_dias_salida).value = registro["dias_salida"]
-            if col_dias_100 and "dias_100" in registro:
-                hoja.cell(row=fila_indice, column=col_dias_100).value = registro["dias_100"]
-            if col_dias_70 and "dias_70" in registro:
-                hoja.cell(row=fila_indice, column=col_dias_70).value = registro["dias_70"]
-            if col_dias_60 and "dias_60" in registro:
-                hoja.cell(row=fila_indice, column=col_dias_60).value = registro["dias_60"]
-            if col_dias_50 and "dias_50" in registro:
-                hoja.cell(row=fila_indice, column=col_dias_50).value = registro["dias_50"]
-            if col_dias_40 and "dias_40" in registro:
-                hoja.cell(row=fila_indice, column=col_dias_40).value = registro["dias_40"]
-            if col_dias_35 and "dias_35" in registro:
-                hoja.cell(row=fila_indice, column=col_dias_35).value = registro["dias_35"]
+            for campo, col in col_map.items():
+                if col and campo in registro:
+                    hoja.cell(row=fila_indice, column=col).value = registro[campo]
 
         # Guarda el archivo corregido en un buffer en memoria
         buffer = io.BytesIO()
@@ -154,10 +117,6 @@ def descargar_excel_corregido():
     except Exception as e:
         return jsonify({"status": "error", "mensaje": f"Error al generar el archivo: {str(e)}"}), 500
     
-#Codigo que quedó de la simulación de automatización que se hizo para la presentación, puede que sirva en el futuro para la automatización real, por ahora no se usa
-import subprocess
-import sys
-
 @app.route('/api/empezar-automatizacion', methods=['POST'])
 def empezar_automatizacion():
     try:
@@ -175,57 +134,21 @@ def empezar_automatizacion():
         datos = request.json or []
         
         # Le damos formato a los datos para el robot de Playwright
+        CAMPOS_SIMPLES = [
+            "rut", "sigla", "fechainicio", "fechatermino", "tipo_movilizacion",
+            "personal_trasladado", "fallback_considerando", "lugar_cometido",
+            "regiones", "atribucion", "dias_salida",
+            "tipo_imputacion_presupuestaria", "nombre_aprobador", "nombre_firmantes"
+        ]
+        CAMPOS_NUMERICOS = ["dias_100", "dias_70", "dias_60", "dias_50", "dias_40", "dias_35"]
+
         datos_robot = []
         for registro in datos:
-            rut = registro.get("rut")
-            sigla = registro.get("sigla")
-            fechainicio = registro.get("fechainicio")
-            fechatermino = registro.get("fechatermino")
-            tipo_movilizacion = registro.get("tipo_movilizacion")
-            personal_trasladado = registro.get("personal_trasladado")
-            fallback_considerando = registro.get("fallback_considerando")
-            lugar_cometido = registro.get("lugar_cometido")
-            regiones = registro.get("regiones")
-            atribucion = registro.get("atribucion")
-            dias_salida = registro.get("dias_salida")
-            dias_100 = registro.get("dias_100")
-            dias_70 = registro.get("dias_70")
-            dias_60 = registro.get("dias_60")
-            dias_50 = registro.get("dias_50")
-            dias_40 = registro.get("dias_40")
-            dias_35 = registro.get("dias_35")
-            tipo_imputacion_presupuestaria = registro.get("tipo_imputacion_presupuestaria")
-            nombre_aprobador = registro.get("nombre_aprobador")
-            nombre_firmantes = registro.get("nombre_firmantes")
-            
-            # Por defecto aprobado, a menos que falten datos esenciales
-            estado = "aprobado"
-            if not rut or not sigla:
-                estado = "pendiente"
-                
-            datos_robot.append({
-                "rut": rut or "",
-                "sigla": sigla or "",
-                "fechainicio": fechainicio or "",
-                "fechatermino": fechatermino or "",
-                "tipo_movilizacion": tipo_movilizacion or "",
-                "personal_trasladado": personal_trasladado or "",
-                "fallback_considerando": fallback_considerando or "",
-                "lugar_cometido": lugar_cometido or "",
-                "regiones": regiones or "",
-                "atribucion": atribucion or "",
-                "dias_salida": dias_salida or "",
-                "dias_100": dias_100 if dias_100 is not None else "",
-                "dias_70": dias_70 if dias_70 is not None else "",
-                "dias_60": dias_60 if dias_60 is not None else "",
-                "dias_50": dias_50 if dias_50 is not None else "",
-                "dias_40": dias_40 if dias_40 is not None else "",
-                "dias_35": dias_35 if dias_35 is not None else "",
-                "tipo_imputacion_presupuestaria": tipo_imputacion_presupuestaria or "",
-                "nombre_aprobador": nombre_aprobador or "",
-                "nombre_firmantes": nombre_firmantes or "",
-                "accion": estado
-            })
+            dato = {campo: registro.get(campo) or "" for campo in CAMPOS_SIMPLES}
+            # Los campos numéricos no pueden usar `or ""` porque 0 es un valor válido
+            dato.update({campo: registro.get(campo) if registro.get(campo) is not None else "" for campo in CAMPOS_NUMERICOS})
+            dato["accion"] = "aprobado" if dato["rut"] and dato["sigla"] else "pendiente"
+            datos_robot.append(dato)
             
         # Guarda los registros en datos_automatizacion.json
         with open(path_datos, "w", encoding="utf-8") as f:
@@ -251,6 +174,103 @@ def progreso_automatizacion():
             return jsonify({"error": str(e)}), 500
     else:
         return jsonify({"estado": "no_iniciado"}), 200
+
+# ==============================================================
+# Endpoints de Credenciales
+# ==============================================================
+
+# Funcion para crear el archivo .json de credenciales
+@app.route('/api/guardar-credenciales', methods=['POST'])
+def guardar_credenciales():
+    try:
+        # 1. Obtenemos los datos que nos envió Vue
+        datos = request.get_json() or {}
+        
+        # 2. Definimos la ruta del archivo en la raíz del proyecto
+        path_credenciales = BASE_DIR / "credenciales.json"
+        
+        # 3. Guardamos el archivo JSON en el disco
+        with open(path_credenciales, "w", encoding="utf-8") as f:
+            json.dump(datos, f, ensure_ascii=False, indent=4)
+            
+        # 4. Respondemos a Vue que todo salió bien (Código 200 = Éxito)
+        return jsonify({"status": "completado", "mensaje": "Credenciales guardadas correctamente"}), 200
+        
+    except Exception as e:
+        # Si algo falla (ej. permisos de disco), avisamos del error (Código 500 = Error del servidor)
+        return jsonify({"status": "error", "mensaje": f"Error al guardar: {str(e)}"}), 500
+
+# Funcion para obtener el archivo .json de credenciales
+@app.route('/api/obtener-credenciales', methods=['GET'])
+def obtener_credenciales():
+    try:
+        path_credenciales = BASE_DIR / "credenciales.json"
+        if path_credenciales.exists():
+            with open(path_credenciales, "r", encoding="utf-8") as f:
+                datos = json.load(f)
+            return jsonify({"status": "completado", "credenciales": datos}), 200
+        else:
+            return jsonify({"status": "completado", "credenciales": {}}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "mensaje": f"Error al leer credenciales: {str(e)}"}), 500
+
+# ==============================================================
+# Endpoints de Datos Conocidos (Conductores / Vehículos)
+# ==============================================================
+
+@app.route('/api/datos-conocidos', methods=['GET'])
+def listar_datos_conocidos():
+    try:
+        datos = obtener_datos_conocidos()
+        return jsonify({"status": "completado", "datos": datos}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "mensaje": f"Error al leer datos conocidos: {str(e)}"}), 500
+
+@app.route('/api/datos-conocidos', methods=['POST'])
+def crear_dato_conocido():
+    try:
+        payload = request.get_json() or {}
+        rut = payload.get("rut")
+        nombre = payload.get("nombre")
+        sigla = payload.get("sigla")
+
+        agregar_dato_conocido(rut, nombre, sigla)
+        return jsonify({"status": "completado", "mensaje": "Registro agregado correctamente."}), 201
+    except ValueError as e:
+        return jsonify({"status": "error", "mensaje": str(e)}), 400
+    except KeyError as e:
+        return jsonify({"status": "error", "mensaje": str(e).strip("'")}), 409
+    except Exception as e:
+        return jsonify({"status": "error", "mensaje": f"Error al guardar conductor: {str(e)}"}), 500
+
+@app.route('/api/datos-conocidos/<rut_original>', methods=['PUT'])
+def modificar_dato_conocido(rut_original):
+    try:
+        payload = request.get_json() or {}
+        rut = payload.get("rut")
+        nombre = payload.get("nombre")
+        sigla = payload.get("sigla")
+
+        editar_dato_conocido(rut_original, rut, nombre, sigla)
+        return jsonify({"status": "completado", "mensaje": "Registro actualizado correctamente."}), 200
+    except ValueError as e:
+        return jsonify({"status": "error", "mensaje": str(e)}), 400
+    except KeyError as e:
+        return jsonify({"status": "error", "mensaje": str(e).strip("'")}), 409
+    except FileNotFoundError as e:
+        return jsonify({"status": "error", "mensaje": str(e)}), 404
+    except Exception as e:
+        return jsonify({"status": "error", "mensaje": f"Error al modificar conductor: {str(e)}"}), 500
+
+@app.route('/api/datos-conocidos/<rut>', methods=['DELETE'])
+def borrar_dato_conocido(rut):
+    try:
+        eliminar_dato_conocido(rut)
+        return jsonify({"status": "completado", "mensaje": "Registro eliminado correctamente."}), 200
+    except FileNotFoundError as e:
+        return jsonify({"status": "error", "mensaje": str(e)}), 404
+    except Exception as e:
+        return jsonify({"status": "error", "mensaje": f"Error al eliminar conductor: {str(e)}"}), 500
 
 
 if __name__ == '__main__':

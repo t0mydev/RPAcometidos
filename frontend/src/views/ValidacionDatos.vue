@@ -1,33 +1,165 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import ValidacionDatosEtapa2 from './ValidacionDatosEtapa2.vue'
+import ValidacionDatosEtapa3 from './ValidacionDatosEtapa3.vue'
 
 const router = useRouter()
 
-// ─── Estado general ───────────────────────────────────────────
-const fileName = ref(history.state?.fileName || 'archivo.xlsx')
-const checks = ref([
-  { id: 'rut',      label: 'Revisando RUT...',              estado: 'pendiente' },
-  { id: 'sigla',  label: 'Revisando sigla vehículo...', estado: 'pendiente' },
-])
-const problemas = ref([])        // lista de errores con meta para el modal
-const procesando = ref(true)
-const procesandoMensaje = ref('Enviando archivo al servidor...')
-const descargando = ref(false)
-const descargarMensaje = ref('')
+// ─── Stepper ──────────────────────────────────────────────────
+const etapaActual = ref(1) // 1=validación, 2=ejecución, 3=finalizado
+const etapas = [
+  { numero: 1, label: 'Validación y Resumen', icono: 'bi-clipboard2-check-fill' },
+  { numero: 2, label: 'Ejecución RPA',         icono: 'bi-robot'                },
+  { numero: 3, label: 'Finalizado',            icono: 'bi-check2-all'           },
+]
 
-const filas = ref([]) // copia reactiva de los registros procesados
+// ─── Estado general ───────────────────────────────────────────
+const fileName            = ref(history.state?.fileName || 'archivo.xlsx')
+const filas               = ref([])
+const procesando          = ref(true)
+const procesandoMensaje   = ref('Enviando archivo al servidor...')
+const descargando         = ref(false)
 const correccionesAplicadas = ref(false)
 
-// ─── Computado: si tiene alguna sugerencia automática pendiente
-const tieneSugerencias = computed(() => {
-  return filas.value.some(f => 
+// ─── Grupos del Checklist (4 familias de reglas) ──────────────
+const grupos = ref([
+  {
+    id: 'identidad',
+    icono: 'bi-person-fill-check',
+    titulo: 'Identidad y Conductor',
+    descripcion: 'RUT y registro en el padrón',
+    estado: 'pendiente',
+    errores: [],
+  },
+  {
+    id: 'vehiculo',
+    icono: 'bi-truck-front-fill',
+    titulo: 'Vehículo y Movilización',
+    descripcion: 'Sigla/patente y tipo de traslado',
+    estado: 'pendiente',
+    errores: [],
+  },
+  {
+    id: 'viaticos',
+    icono: 'bi-cash-coin',
+    titulo: 'Coherencia de Viáticos',
+    descripcion: 'Días de salida vs porcentajes de pago',
+    estado: 'pendiente',
+    errores: [],
+  },
+  {
+    id: 'admin',
+    icono: 'bi-calendar2-check',
+    titulo: 'Datos Administrativos',
+    descripcion: 'Fechas y campos obligatorios',
+    estado: 'pendiente',
+    errores: [],
+  },
+])
+
+// ─── Computados ───────────────────────────────────────────────
+const totalErrores = computed(() =>
+  grupos.value.reduce((sum, g) => sum + g.errores.length, 0)
+)
+
+const tieneSugerencias = computed(() =>
+  filas.value.some(f =>
     (!f.rut_valido && f.sugerencia_correccion_rut) ||
     (!f.sigla_valida && f.sugerencia_correccion_sigla)
   )
-})
+)
 
-// ─── Llamada a la API Flask ───────────────────────────────────
+const todasValidas = computed(() =>
+  !procesando.value && totalErrores.value === 0
+)
+
+// ─── Helpers de validación y formato ──────────────────────────
+
+// Cuenta días de salida separados por comas ("LUNES, MARTES" → 2)
+function contarDiasSalida(diasStr) {
+  if (!diasStr || String(diasStr).trim() === '') return 0
+  return String(diasStr).split(',').filter(d => d.trim() !== '').length
+}
+
+// Suma los valores de las columnas de porcentaje de pago
+function sumarViaticos(fila) {
+  const campos = ['dias_100', 'dias_70', 'dias_60', 'dias_50', 'dias_40', 'dias_35']
+  return campos.reduce((sum, c) => {
+    const raw = String(fila[c] ?? '').replace(',', '.')
+    const val = parseFloat(raw)
+    return sum + (isNaN(val) ? 0 : val)
+  }, 0)
+}
+
+// Formatea RUT chileno:
+// - Si viene con guión ("13193029-9"), separa cuerpo y DV: "13.193.029-9"
+// - Si viene sin guión ("13652729"), es el cuerpo directo del conductor: "13.652.729"
+function formatearRut(rut) {
+  if (rut == null) return ''
+  const str = String(rut).trim()
+  if (!str) return ''
+  if (str.includes('-')) {
+    const [cuerpo, dv] = str.split('-')
+    const cuerpoLimpio = cuerpo.replace(/\./g, '')
+    const cuerpoFormateado = cuerpoLimpio.replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+    return `${cuerpoFormateado}-${dv.toUpperCase()}`
+  }
+  const soloDigitos = str.replace(/\./g, '')
+  if (/^\d+$/.test(soloDigitos)) {
+    return soloDigitos.replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+  }
+  return str
+}
+
+// Presentación de la sugerencia conservando el DV original de la celda
+function sugerenciaRutConDv(fila) {
+  if (!fila?.sugerencia_correccion_rut) return ''
+  const valActual = String(fila.rut || '').trim()
+  const dvOriginal = valActual.includes('-') ? valActual.split('-')[1] : ''
+  const rutConDv = dvOriginal ? `${fila.sugerencia_correccion_rut}-${dvOriginal}` : fila.sugerencia_correccion_rut
+  return formatearRut(rutConDv)
+}
+
+// Resumen de viáticos para la columna de la tabla
+function resumenViaticos(fila) {
+  const mapa = {
+    dias_100: '100%', dias_70: '70%', dias_60: '60%',
+    dias_50: '50%', dias_40: '40%', dias_35: '35%',
+  }
+  const partes = []
+  for (const [campo, etiq] of Object.entries(mapa)) {
+    const val = parseFloat(String(fila[campo] ?? '').replace(',', '.'))
+    if (!isNaN(val) && val > 0) partes.push(`${etiq}:${val}`)
+  }
+  return partes.join(' · ') || '—'
+}
+
+// Lista de errores semánticos de una fila específica según las validaciones del backend
+function erroresDeFila(fila) {
+  const e = []
+  if (fila.rut_valido === false)   e.push('rut')
+  if (fila.sigla_valida === false) e.push('sigla')
+  if (fila.viaticos_validos === false) e.push('viaticos')
+  if (fila.fechas_validas === false) e.push('fechas')
+  if (fila.admin_valido === false) {
+    for (const c of ['fechainicio', 'fechatermino', 'dias_salida']) {
+      if (!fila[c] || String(fila[c]).trim() === '') {
+        if (!e.includes(c)) e.push(c)
+      }
+    }
+    if (!fila.sigla || String(fila.sigla).trim() === '') {
+      if (!e.includes('sigla')) e.push('sigla')
+    }
+  }
+  return e
+}
+
+function filaTieneError(fila, campo) {
+  return erroresDeFila(fila).includes(campo)
+}
+
+// ─── Carga y animación de grupos ─────────────────────────────
 onMounted(async () => {
   const archivo = window.__excelFile
   if (!archivo) {
@@ -36,902 +168,1180 @@ onMounted(async () => {
     return
   }
 
-  await delay(600)
+  await delay(500)
+  procesandoMensaje.value = 'Procesando con el servidor...'
 
   const formData = new FormData()
   formData.append('documento_excel', archivo)
 
-  let resultados = []
   try {
-    procesandoMensaje.value = 'Procesando con el servidor...'
-    const resp = await fetch('/api/procesar-excel', {
-      method: 'POST',
-      body: formData,
-    })
-
-    if (!resp.ok) {
-      throw new Error(`El servidor respondió con estado ${resp.status}`)
-    }
-
+    const resp = await fetch('/api/procesar-excel', { method: 'POST', body: formData })
+    if (!resp.ok) throw new Error(`El servidor respondió con estado ${resp.status}`)
     const data = await resp.json()
-
     if (data.status === 'completado') {
-      resultados = data.resultados
-      filas.value = resultados
+      filas.value = data.resultados
     } else {
       procesandoMensaje.value = `Error: ${data.mensaje || 'Respuesta inesperada del servidor'}`
       procesando.value = false
       return
     }
-
   } catch (e) {
     procesandoMensaje.value = `Error de conexión: ${e.message}`
     procesando.value = false
     return
   }
 
-  await animarChecks(resultados)
+  await animarTodosLosGrupos()
   procesando.value = false
 })
 
-// ─── Animación secuencial de checks ──────────────────────────
-async function animarChecks(resultados) {
-  const camposCheck = ['rut', 'sigla']
+async function animarTodosLosGrupos() {
+  // Grupo 1 — Identidad y Conductor (validación backend: rut)
+  await animarGrupo('identidad', (fila) => {
+    if (fila.rut_valido !== false) return []
+    const msgs = fila.errores_por_grupo?.identidad?.length
+      ? fila.errores_por_grupo.identidad
+      : [(fila.errores || []).find(e => e.toLowerCase().includes('rut')) || 'RUT inválido o no registrado']
+    return msgs.map(m => ({
+      fila:         fila.numero_fila_excel,
+      campo:        'rut',
+      mensaje:      m,
+      sugerencia:   fila.sugerencia_correccion_rut,
+      valor_actual: fila.rut,
+      fila_ref:     fila,
+    }))
+  }, 900)
 
-  for (let i = 0; i < checks.value.length; i++) {
-    checks.value[i].estado = 'revisando'
-    await delay(900)
+  // Grupo 2 — Vehículo (validación backend: sigla)
+  await animarGrupo('vehiculo', (fila) => {
+    if (fila.sigla_valida !== false) return []
+    const msgs = fila.errores_por_grupo?.vehiculo?.length
+      ? fila.errores_por_grupo.vehiculo
+      : [(fila.errores || []).find(e => e.toLowerCase().includes('sigla')) || 'Sigla/patente inválida o no registrada']
+    return msgs.map(m => ({
+      fila:         fila.numero_fila_excel,
+      campo:        'sigla',
+      mensaje:      m,
+      sugerencia:   fila.sugerencia_correccion_sigla,
+      valor_actual: fila.sigla,
+      fila_ref:     fila,
+    }))
+  }, 900)
 
-    const campo = camposCheck[i]
-    // Buscar si hay algún error en ese campo en cualquier fila
-    const erroresCampo = []
-    for (const fila of resultados) {
-      const esCampoValido = campo === 'sigla' ? fila.sigla_valida : fila[`${campo}_valido`]
-      const erroresFila = fila.errores || []
+  // Grupo 3 — Coherencia de Viáticos (validación backend)
+  await animarGrupo('viaticos', (fila) => {
+    if (fila.viaticos_validos !== false) return []
+    const msgs = fila.errores_por_grupo?.viaticos?.length
+      ? fila.errores_por_grupo.viaticos
+      : ['Incoherencia en días de salida vs porcentajes de viático']
+    const totalDias = contarDiasSalida(fila.dias_salida)
+    const sumaPorc  = sumarViaticos(fila)
+    return msgs.map(m => ({
+      fila:         fila.numero_fila_excel,
+      campo:        'viaticos',
+      mensaje:      `Fila ${fila.numero_fila_excel}: ${m}`,
+      sugerencia:   null,
+      valor_actual: `${totalDias} días / suma ${sumaPorc}`,
+      fila_ref:     fila,
+    }))
+  }, 800)
 
-      if (esCampoValido === false) {
-        const mensajeError = erroresFila.find(e =>
-          e.toLowerCase().includes(campo === 'rut' ? 'rut' : 'sigla')
-        )
-        erroresCampo.push({
+  // Grupo 4 — Datos Administrativos (validación backend)
+  await animarGrupo('admin', (fila) => {
+    if (fila.admin_valido !== false && fila.fechas_validas !== false) return []
+    const msgs = fila.errores_por_grupo?.admin?.length
+      ? fila.errores_por_grupo.admin
+      : ['Datos administrativos o fechas con observaciones']
+    return msgs.map(m => ({
+      fila:         fila.numero_fila_excel,
+      campo:        m.toLowerCase().includes('fecha') ? 'fechas' : 'admin',
+      mensaje:      `Fila ${fila.numero_fila_excel}: ${m}`,
+      sugerencia:   null,
+      valor_actual: '(observado)',
+      fila_ref:     fila,
+    }))
+  }, 800)
+}
+
+async function animarGrupo(grupoId, evaluarFila, retardo = 800) {
+  const idx = grupos.value.findIndex(g => g.id === grupoId)
+  if (idx === -1) return
+  grupos.value[idx].estado = 'revisando'
+  await delay(retardo)
+  const errores = filas.value.flatMap(evaluarFila)
+  grupos.value[idx].errores = errores
+  grupos.value[idx].estado  = errores.length === 0 ? 'ok' : 'error'
+}
+
+// ─── Recalcular grupos tras correcciones ──────────────────────
+function recalcularGrupos() {
+  const defs = [
+    {
+      id: 'identidad',
+      fn: (fila) => {
+        if (fila.rut_valido !== false) return []
+        const msgs = fila.errores_por_grupo?.identidad?.length
+          ? fila.errores_por_grupo.identidad
+          : ['RUT inválido']
+        return msgs.map(m => ({
+          fila: fila.numero_fila_excel, campo: 'rut',
+          mensaje: m, sugerencia: fila.sugerencia_correccion_rut,
+          valor_actual: fila.rut, fila_ref: fila,
+        }))
+      },
+    },
+    {
+      id: 'vehiculo',
+      fn: (fila) => {
+        if (fila.sigla_valida !== false) return []
+        const msgs = fila.errores_por_grupo?.vehiculo?.length
+          ? fila.errores_por_grupo.vehiculo
+          : ['Sigla inválida']
+        return msgs.map(m => ({
+          fila: fila.numero_fila_excel, campo: 'sigla',
+          mensaje: m, sugerencia: fila.sugerencia_correccion_sigla,
+          valor_actual: fila.sigla, fila_ref: fila,
+        }))
+      },
+    },
+    {
+      id: 'viaticos',
+      fn: (fila) => {
+        if (fila.viaticos_validos !== false) return []
+        const msgs = fila.errores_por_grupo?.viaticos?.length
+          ? fila.errores_por_grupo.viaticos
+          : ['Incoherencia de viáticos']
+        const td = contarDiasSalida(fila.dias_salida)
+        const sp = sumarViaticos(fila)
+        return msgs.map(m => ({
+          fila: fila.numero_fila_excel, campo: 'viaticos',
+          mensaje: m, sugerencia: null,
+          valor_actual: `${td} días / suma ${sp}`, fila_ref: fila,
+        }))
+      },
+    },
+    {
+      id: 'admin',
+      fn: (fila) => {
+        if (fila.admin_valido !== false && fila.fechas_validas !== false) return []
+        const msgs = fila.errores_por_grupo?.admin?.length
+          ? fila.errores_por_grupo.admin
+          : ['Datos administrativos observados']
+        return msgs.map(m => ({
           fila: fila.numero_fila_excel,
-          campo,
-          mensaje: mensajeError || `${campo} inválido.`,
-          sugerencia: campo === 'rut' ? fila.sugerencia_correccion_rut 
-                    : campo === 'sigla' ? fila.sugerencia_correccion_sigla 
-                    : null,
-          valor_actual: fila[campo],
-          fila_ref: fila
-        })
-      }
-    }
-
-    if (erroresCampo.length === 0) {
-      checks.value[i].estado = 'ok'
-    } else {
-      checks.value[i].estado = 'error'
-      checks.value[i].erroresCampo = erroresCampo
-      problemas.value.push(...erroresCampo)
-    }
+          campo: m.toLowerCase().includes('fecha') ? 'fechas' : 'admin',
+          mensaje: m, sugerencia: null, valor_actual: '(observado)', fila_ref: fila,
+        }))
+      },
+    },
+  ]
+  for (const def of defs) {
+    const idx = grupos.value.findIndex(g => g.id === def.id)
+    if (idx === -1) continue
+    const errores = filas.value.flatMap(def.fn)
+    grupos.value[idx].errores = errores
+    grupos.value[idx].estado  = errores.length === 0 ? 'ok' : 'error'
   }
 }
 
-// ─── Recalcular problemas y checks tras correcciones ──────────
-function actualizarProblemasYChecks() {
-  const camposCheck = ['rut', 'sigla']
-  const labels = {
-    rut: 'Revisando RUT...',
-    sigla: 'Revisando sigla vehículo...'
-  }
-
-  problemas.value = []
-
-  checks.value = camposCheck.map((campo) => {
-    const checkId = campo
-    const erroresCampo = []
-    
-    for (const fila of filas.value) {
-      const esCampoValido = campo === 'sigla' ? fila.sigla_valida : fila[`${campo}_valido`]
-      const erroresFila = fila.errores || []
-
-      if (esCampoValido === false) {
-        const mensajeError = erroresFila.find(e =>
-          e.toLowerCase().includes(campo === 'rut' ? 'rut' : 'sigla')
-        )
-        erroresCampo.push({
-          fila: fila.numero_fila_excel,
-          campo,
-          mensaje: mensajeError || `${campo} inválido.`,
-          sugerencia: campo === 'rut' ? fila.sugerencia_correccion_rut 
-                    : campo === 'sigla' ? fila.sugerencia_correccion_sigla 
-                    : null,
-          valor_actual: fila[campo],
-          fila_ref: fila
-        })
-      }
-    }
-
-    const estado = erroresCampo.length === 0 ? 'ok' : 'error'
-    if (estado === 'error') {
-      problemas.value.push(...erroresCampo)
-    }
-
-    return {
-      id: checkId,
-      label: labels[campo],
-      estado,
-      erroresCampo
-    }
-  })
-}
-
-// ─── Corregir Fila Directamente (aplica sugerencia automática) ──
+// ─── Auto-corrección ──────────────────────────────────────────
 function corregirFilaDirectamente(p) {
-  if (p && p.sugerencia) {
-    // Actualiza el valor en la referencia de la fila con la sugerencia
-    p.fila_ref[p.campo] = p.sugerencia
-    // Marca el campo como válido
-    p.fila_ref[p.campo === 'sigla' ? 'sigla_valida' : `${p.campo}_valido`] = true
-    
-    // Remove la sugerencia ya que fue aplicada
-    if (p.campo === 'rut') {
-      p.fila_ref.sugerencia_correccion_rut = null
-    } else if (p.campo === 'sigla') {
-      p.fila_ref.sugerencia_correccion_sigla = null
+  if (!p?.sugerencia) return
+  if (p.campo === 'rut') {
+    const valActual = String(p.fila_ref.rut || '').trim()
+    const dvOriginal = valActual.includes('-') ? valActual.split('-')[1] : ''
+    p.fila_ref.rut = dvOriginal ? `${p.sugerencia}-${dvOriginal}` : p.sugerencia
+    p.fila_ref.rut_valido = true
+    p.fila_ref.sugerencia_correccion_rut = null
+    if (p.fila_ref.errores_por_grupo?.identidad) {
+      p.fila_ref.errores_por_grupo.identidad = []
     }
-
-    // Remove de los errores del registro el mensaje correspondiente
-    p.fila_ref.errores = p.fila_ref.errores.filter(err => 
-      !err.toLowerCase().includes(p.campo === 'rut' ? 'rut' : 'sigla')
-    )
-
-    actualizarProblemasYChecks()
-    correccionesAplicadas.value = true
+  } else {
+    p.fila_ref[p.campo] = p.sugerencia
+    p.fila_ref[p.campo === 'sigla' ? 'sigla_valida' : `${p.campo}_valido`] = true
+    if (p.campo === 'sigla') {
+      p.fila_ref.sugerencia_correccion_sigla = null
+      if (p.fila_ref.errores_por_grupo?.vehiculo) {
+        p.fila_ref.errores_por_grupo.vehiculo = []
+      }
+    }
   }
+  p.fila_ref.errores = (p.fila_ref.errores || []).filter(e =>
+    !e.toLowerCase().includes(p.campo === 'rut' ? 'rut' : 'sigla')
+  )
+  recalcularGrupos()
+  correccionesAplicadas.value = true
 }
 
-// ─── Aplicar todas las sugerencias automáticamente ─────────────
 function aplicarTodasLasSugerencias() {
-  let count = 0
   filas.value.forEach(f => {
-    // RUT
     if (!f.rut_valido && f.sugerencia_correccion_rut) {
-      f.rut = f.sugerencia_correccion_rut
+      const valActual = String(f.rut || '').trim()
+      const dvOriginal = valActual.includes('-') ? valActual.split('-')[1] : ''
+      f.rut = dvOriginal ? `${f.sugerencia_correccion_rut}-${dvOriginal}` : f.sugerencia_correccion_rut
       f.rut_valido = true
       f.sugerencia_correccion_rut = null
-      f.errores = f.errores.filter(err => !err.toLowerCase().includes('rut'))
-      count++
+      if (f.errores_por_grupo?.identidad) {
+        f.errores_por_grupo.identidad = []
+      }
+      f.errores = (f.errores || []).filter(e => !e.toLowerCase().includes('rut'))
     }
-    // sigla
     if (!f.sigla_valida && f.sugerencia_correccion_sigla) {
       f.sigla = f.sugerencia_correccion_sigla
       f.sigla_valida = true
       f.sugerencia_correccion_sigla = null
-      f.errores = f.errores.filter(err => !err.toLowerCase().includes('sigla'))
-      count++
+      if (f.errores_por_grupo?.vehiculo) {
+        f.errores_por_grupo.vehiculo = []
+      }
+      f.errores = (f.errores || []).filter(e => !e.toLowerCase().includes('sigla'))
     }
   })
-  if (count > 0) {
-    actualizarProblemasYChecks()
-    correccionesAplicadas.value = true
-  }
+  recalcularGrupos()
+  correccionesAplicadas.value = true
 }
 
-// ─── Descargar Excel Corregido ─────────────────────────────────
+// ─── Descarga Excel corregido ─────────────────────────────────
 async function descargarExcelCorregido() {
   const archivo = window.__excelFile
-  if (!archivo) {
-    alert('No se encontró el archivo original en sesión. Vuelve al inicio.')
-    return
-  }
-
+  if (!archivo) { alert('No se encontró el archivo original en sesión. Vuelve al inicio.'); return }
   descargando.value = true
-  descargarMensaje.value = 'Generando archivo corregido...'
-
   const formData = new FormData()
   formData.append('documento_excel', archivo)
-
-  // Formatea los registros para que la API en Flask los reciba correctamente
   const payload = filas.value.map(f => ({
     numero_fila_excel: f.numero_fila_excel,
-    rut: f.rut,
-    nombre: f.nombre,
-    sigla: f.sigla,
-    lugar_cometido: f.lugar_cometido,
-    region_principal: f.region_principal,
-    regiones: f.regiones,
-    personal_trasladado: f.personal_trasladado,
-    nombre_aprobador: f.nombre_aprobador,
-    nombre_firmantes: f.nombre_firmantes,
+    rut: f.rut, nombre: f.nombre, sigla: f.sigla,
+    lugar_cometido: f.lugar_cometido, region_principal: f.region_principal,
+    regiones: f.regiones, personal_trasladado: f.personal_trasladado,
+    nombre_aprobador: f.nombre_aprobador, nombre_firmantes: f.nombre_firmantes,
     tipo_imputacion_presupuestaria: f.tipo_imputacion_presupuestaria,
-    fallback_considerando: f.fallback_considerando,
-    regiones: f.regiones,
-    atribucion: f.atribucion,
-    dias_salida: f.dias_salida,
-    dias_100: f.dias_100,
-    dias_70: f.dias_70,
-    dias_60: f.dias_60,
-    dias_50: f.dias_50,
-    dias_40: f.dias_40,
-    dias_35: f.dias_35
+    fallback_considerando: f.fallback_considerando, atribucion: f.atribucion,
+    dias_salida: f.dias_salida, dias_100: f.dias_100, dias_70: f.dias_70,
+    dias_60: f.dias_60, dias_50: f.dias_50, dias_40: f.dias_40, dias_35: f.dias_35,
   }))
-
   formData.append('reporte_corregido', JSON.stringify(payload))
-
   try {
-    const resp = await fetch('/api/descargar-excel-corregido', {
-      method: 'POST',
-      body: formData,
-    })
-
-    if (!resp.ok) {
-      throw new Error(`El servidor respondió con estado ${resp.status}`)
-    }
-
+    const resp = await fetch('/api/descargar-excel-corregido', { method: 'POST', body: formData })
+    if (!resp.ok) throw new Error(`Estado ${resp.status}`)
     const blob = await resp.blob()
     const urlBlob = window.URL.createObjectURL(blob)
-
     const link = document.createElement('a')
     link.href = urlBlob
-
     let filename = fileName.value.replace(/\.xlsx?$/, '_corregido.xlsx')
-    const contentDisposition = resp.headers.get('Content-Disposition')
-    if (contentDisposition) {
-      const match = contentDisposition.match(/filename="?([^"]+)"?/)
-      if (match) filename = match[1]
-    }
-
+    const cd = resp.headers.get('Content-Disposition')
+    if (cd) { const m = cd.match(/filename="?([^"]+)"?/); if (m) filename = m[1] }
     link.setAttribute('download', filename)
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
     window.URL.revokeObjectURL(urlBlob)
-
-    descargarMensaje.value = '¡Descarga exitosa!'
-    setTimeout(() => { descargarMensaje.value = '' }, 3000)
-
   } catch (e) {
-    console.error(e)
     alert(`Error al descargar el archivo: ${e.message}`)
   } finally {
     descargando.value = false
   }
 }
 
-const automatizando = ref(false)
-const enAutomatizacion = ref(false)
-const logsAutomatizacion = ref([])
-const consolaCuerpoRef = ref(null)
-
-let intervaloProgreso = null
-const ultimoPasoRegistrado = ref(-1)
-const ultimoMensajeRegistrado = ref('')
-
-async function agregarLog(mensaje) {
-  logsAutomatizacion.value.push(mensaje)
-  await nextTick()
-  if (consolaCuerpoRef.value) {
-    consolaCuerpoRef.value.scrollTop = consolaCuerpoRef.value.scrollHeight
-  }
+function empezarAutomatizacion() {
+  etapaActual.value = 2
 }
 
-function comenzarMonitoreoProgreso() {
-  if (intervaloProgreso) clearInterval(intervaloProgreso)
-  ultimoPasoRegistrado.value = -1
-  ultimoMensajeRegistrado.value = ''
-
-  intervaloProgreso = setInterval(async () => {
-    try {
-      const resp = await fetch('/api/progreso-automatizacion')
-      if (!resp.ok) return
-
-      const data = await resp.json()
-      
-      // Muestra todos los mensajes registrados en el historial acumulativo
-      if (data.historial && Array.isArray(data.historial)) {
-        for (const msg of data.historial) {
-          if (!logsAutomatizacion.value.includes(msg)) {
-            await agregarLog(msg)
-          }
-        }
-      } else if (data.estado === 'iniciando') {
-        const msg = data.detalle || 'Cargando entorno de Playwright...'
-        if (!logsAutomatizacion.value.includes(msg)) {
-          await agregarLog(msg)
-        }
-      }
-
-      if (data.estado === 'completado') {
-        const finalMsg = '¡Automatización finalizada exitosamente!'
-        if (!logsAutomatizacion.value.includes(finalMsg)) {
-          await agregarLog(finalMsg)
-        }
-        detenerMonitoreoProgreso()
-        automatizando.value = false
-      } else if (data.estado === 'error') {
-        const errorMsg = `Error durante la automatización: ${data.nombre || 'Desconocido'}`
-        if (!logsAutomatizacion.value.includes(errorMsg)) {
-          await agregarLog(errorMsg)
-        }
-        detenerMonitoreoProgreso()
-        automatizando.value = false
-      }
-    } catch (e) {
-      console.error('Error al consultar el progreso:', e)
-    }
-  }, 100)
-}
-
-function detenerMonitoreoProgreso() {
-  if (intervaloProgreso) {
-    clearInterval(intervaloProgreso)
-    intervaloProgreso = null
-  }
-}
-
-onUnmounted(() => {
-  detenerMonitoreoProgreso()
-})
-
-async function empezarAutomatizacion() {
-  automatizando.value = true
-  enAutomatizacion.value = true
-  logsAutomatizacion.value = []
-  await agregarLog('Iniciando el motor de automatización...')
-  
-  try {
-    const payload = filas.value.map(f => ({
-      rut: f.rut,
-      sigla: f.sigla,
-      fechainicio: f.fechainicio,
-      fechatermino: f.fechatermino,
-      tipo_movilizacion: f.tipo_movilizacion,
-      personal_trasladado: f.personal_trasladado,
-      fallback_considerando: f.fallback_considerando,
-      lugar_cometido: f.lugar_cometido,
-      regiones: f.regiones,
-      atribucion: f.atribucion,
-      dias_salida: f.dias_salida,
-      dias_100: f.dias_100,
-      dias_70: f.dias_70,
-      dias_60: f.dias_60,
-      dias_50: f.dias_50,
-      dias_40: f.dias_40,
-      dias_35: f.dias_35,
-      tipo_imputacion_presupuestaria: f.tipo_imputacion_presupuestaria,
-      nombre_aprobador: f.nombre_aprobador,
-      nombre_firmantes: f.nombre_firmantes
-    }))
-
-    const resp = await fetch('/api/empezar-automatizacion', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload)
-    })
-
-    if (!resp.ok) {
-      throw new Error(`El servidor respondió con estado ${resp.status}`)
-    }
-
-    const data = await resp.json()
-    if (data.status === 'iniciado') {
-      comenzarMonitoreoProgreso()
-    } else {
-      await agregarLog(`Error al iniciar la automatización: ${data.mensaje}`)
-      automatizando.value = false
-    }
-  } catch (e) {
-    console.error(e)
-    await agregarLog(`Error al conectar con el servidor: ${e.message}`)
-    automatizando.value = false
-  }
-}
-
-// ─── Volver al inicio ─────────────────────────────────────────
+// ─── Navegación ───────────────────────────────────────────────
 function volverAlInicio() {
   window.__excelFile = null
   router.push({ name: 'Home' })
 }
 
-// ─── Helpers ──────────────────────────────────────────────────
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
+function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
 </script>
 
 <template>
   <div class="validacion-container">
 
-    <!-- ── Panel izquierdo: Check List ── -->
-    <aside class="panel-checklist">
-      <h2 class="checklist-title">Check List:</h2>
-      <ul class="checklist-lista">
-        <li
-          v-for="check in checks"
-          :key="check.id"
-          class="checklist-item"
-          :class="{
-            'estado-pendiente': check.estado === 'pendiente',
-            'estado-revisando': check.estado === 'revisando',
-            'estado-ok':        check.estado === 'ok',
-            'estado-error':     check.estado === 'error',
-          }"
-        >
-          <!-- Icono de estado -->
-          <span class="check-icono">
-            <i v-if="check.estado === 'ok'"       class="bi bi-check-circle-fill"></i>
-            <i v-else-if="check.estado === 'error'" class="bi bi-x-circle-fill"></i>
-            <i v-else-if="check.estado === 'revisando'" class="bi bi-arrow-repeat spin"></i>
-            <i v-else class="bi bi-circle"></i>
-          </span>
-          <span class="check-label">{{ check.label }}</span>
-
-          <!-- Mini-lista de errores clickeables si el estado es error -->
-          <ul v-if="check.estado === 'error' && check.erroresCampo" class="sub-errores">
-            <li
-              v-for="(err, idx) in check.erroresCampo"
-              :key="idx"
-              class="sub-error-item d-flex flex-column gap-1 mb-2"
-            >
-              <div class="d-flex align-items-center justify-content-between">
-                <span><strong class="text-dark">{{ err.valor_actual || '(Vacío)' }}</strong></span>
-              </div>
-              <div v-if="err.sugerencia" class="d-flex align-items-center justify-content-between bg-dark p-1 rounded border border-warning mt-1">
-                <span class="text-warning small me-2" style="font-size: 11px;">
-                  <i class="bi bi-lightbulb-fill"></i> ¿{{ err.sugerencia }}?
-                </span>
-                <button 
-                  class="btn btn-xs btn-warning py-0 px-2 fw-bold text-dark"
-                  style="font-size: 10px;"
-                  @click="corregirFilaDirectamente(err)"
-                >
-                  Corregir
-                </button>
-              </div>
-            </li>
-          </ul>
-        </li>
-      </ul>
-
-      <!-- Acciones de archivo -->
-      <div class="actions-container">
-        <!-- Botón Auto-corregir -->
-        <button 
-          v-if="!procesando && tieneSugerencias"
-          class="btn btn-warning w-100 mb-2 py-2 fw-bold text-dark d-flex align-items-center justify-content-center gap-2"
-          @click="aplicarTodasLasSugerencias"
-        >
-          <i class="bi bi-magic"></i>
-          <span>Auto-corregir Todo</span>
-        </button>
-
-        <!-- Botón Empezar automatización -->
-        <button 
-          v-if="!procesando && problemas.length === 0"
-          class="btn btn-primary w-100 mb-2 py-2 fw-bold d-flex align-items-center justify-content-center gap-2"
-          :disabled="automatizando"
-          @click="empezarAutomatizacion"
-        >
-          <span v-if="automatizando" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-          <i v-else class="bi bi-play-circle-fill"></i>
-          <span>{{ automatizando ? 'Ejecutando...' : 'Empezar automatización' }}</span>
-        </button>
-
-        <!-- Botón descargar corregido -->
-        <button 
-          v-if="!procesando"
-          class="btn btn-success w-100 mb-3 py-2 fw-bold d-flex align-items-center justify-content-center gap-2"
-          :disabled="descargando || !correccionesAplicadas"
-          @click="descargarExcelCorregido"
-        >
-          <span v-if="descargando" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-          <i v-else class="bi bi-file-earmark-arrow-down-fill"></i>
-          <span>{{ descargando ? 'Generando...' : 'Descargar Excel' }}</span>
-        </button>
-
-        <!-- Botón volver -->
-        <button class="btn btn-outline-primary btn-volver w-100 py-2" @click="volverAlInicio">
-          <i class="bi bi-arrow-left me-2"></i>Volver al inicio
-        </button>
+    <!-- ══════════════════════════════════════════════════════ -->
+    <!-- STEPPER DE ETAPAS                                      -->
+    <!-- ══════════════════════════════════════════════════════ -->
+    <div class="stepper-barra">
+      <div class="stepper-inner">
+        <template v-for="(etapa, i) in etapas" :key="etapa.numero">
+          <div
+            class="stepper-paso"
+            :class="{
+              'paso--activo':     etapaActual === etapa.numero,
+              'paso--completado': etapaActual >  etapa.numero,
+              'paso--pendiente':  etapaActual <  etapa.numero,
+            }"
+          >
+            <div class="paso-circulo">
+              <i v-if="etapaActual > etapa.numero" class="bi bi-check-lg"></i>
+              <i v-else :class="`bi ${etapa.icono}`"></i>
+            </div>
+            <span class="paso-label">{{ etapa.label }}</span>
+          </div>
+          <!-- Línea conectora entre pasos -->
+          <div
+            v-if="i < etapas.length - 1"
+            class="stepper-linea"
+            :class="{ 'linea--completa': etapaActual > etapa.numero }"
+          ></div>
+        </template>
       </div>
-    </aside>
+    </div>
 
-    <!-- ── Panel derecho: Consola de problemas ── -->
-    <main class="panel-consola">
-      <div class="consola-header">
-        <i class="bi bi-terminal-fill me-2"></i>
-        <span v-if="enAutomatizacion">Progreso de la Automatización:</span>
-        <span v-else>Problemas Específicos Identificados:</span>
-      </div>
 
-      <div class="consola-cuerpo" ref="consolaCuerpoRef">
-        <!-- Estado: procesando -->
-        <div v-if="procesando" class="consola-procesando">
-          <span class="cursor-blink">▌</span>
-          {{ procesandoMensaje }}
+    <!-- ══════════════════════════════════════════════════════ -->
+    <!-- ETAPA 1: VALIDACIÓN Y RESUMEN                          -->
+    <!-- ══════════════════════════════════════════════════════ -->
+    <div v-if="etapaActual === 1" class="etapa-layout">
+
+      <!-- ── Panel izquierdo: Checklist ── -->
+      <aside class="panel-checklist">
+        <h2 class="checklist-titulo">Validación</h2>
+
+        <!-- Estado: cargando -->
+        <div v-if="procesando" class="checklist-cargando">
+          <div class="spinner-border text-primary mb-2" style="width:2rem;height:2rem" role="status"></div>
+          <p class="text-muted small mb-0">{{ procesandoMensaje }}</p>
         </div>
 
-        <!-- Si esta en automatización -->
-        <template v-else-if="enAutomatizacion">
-          <div class="consola-intro">
-            Ejecutando robot de automatización en Playwright
-          </div>
-          <div
-            v-for="(log, idx) in logsAutomatizacion"
-            :key="idx"
-            class="consola-linea py-2"
+        <!-- Grupos de validación -->
+        <ul v-else class="grupos-lista">
+          <li
+            v-for="grupo in grupos"
+            :key="grupo.id"
+            class="grupo-item"
+            :class="`grupo--${grupo.estado}`"
           >
-            <div>
-              <span class="linea-prefijo">› </span>
-              <span class="linea-mensaje text-white">{{ log }}</span>
+            <!-- Cabecera del grupo -->
+            <div class="grupo-cabecera">
+              <div class="grupo-icono">
+                <i v-if="grupo.estado === 'ok'"          class="bi bi-check-circle-fill"></i>
+                <i v-else-if="grupo.estado === 'error'"  class="bi bi-x-circle-fill"></i>
+                <i v-else-if="grupo.estado === 'revisando'" class="bi bi-arrow-repeat spin"></i>
+                <i v-else                                class="bi bi-circle"></i>
+              </div>
+              <div class="grupo-texto">
+                <span class="grupo-nombre">{{ grupo.titulo }}</span>
+                <span class="grupo-desc">{{ grupo.descripcion }}</span>
+              </div>
+              <span v-if="grupo.errores.length > 0" class="grupo-conteo">
+                {{ grupo.errores.length }}
+              </span>
+            </div>
+
+            <!-- Detalle de errores del grupo -->
+            <ul v-if="grupo.estado === 'error' && grupo.errores.length" class="errores-lista">
+              <li v-for="(err, idx) in grupo.errores" :key="idx" class="error-item">
+                <div class="error-cabecera">
+                  <i class="bi bi-exclamation-triangle-fill text-danger"></i>
+                  <strong class="error-valor">{{ err.valor_actual || '(Vacío)' }}</strong>
+                  <span class="error-fila">Fila {{ err.fila }}</span>
+                </div>
+              </li>
+            </ul>
+          </li>
+        </ul>
+
+        <!-- Acciones del sidebar -->
+        <div class="sidebar-acciones" v-if="!procesando">
+          <button
+            v-if="tieneSugerencias"
+            class="btn btn-warning w-100 mb-2 py-2 fw-bold d-flex align-items-center justify-content-center gap-2"
+            @click="aplicarTodasLasSugerencias"
+          >
+            <i class="bi bi-magic"></i>Auto-corregir Todo
+          </button>
+          <button
+            v-if="correccionesAplicadas"
+            class="btn btn-success w-100 mb-2 py-2 fw-bold d-flex align-items-center justify-content-center gap-2"
+            :disabled="descargando"
+            @click="descargarExcelCorregido"
+          >
+            <span v-if="descargando" class="spinner-border spinner-border-sm me-1"></span>
+            <i v-else class="bi bi-file-earmark-arrow-down-fill"></i>
+            {{ descargando ? 'Generando...' : 'Descargar Excel Corregido' }}
+          </button>
+          <button class="btn btn-outline-secondary btn-sm w-100 mt-1" @click="volverAlInicio">
+            <i class="bi bi-arrow-left me-1"></i>Volver al inicio
+          </button>
+        </div>
+      </aside>
+
+      <!-- ── Panel derecho: Tabla resumen ── -->
+      <main class="panel-tabla">
+
+        <!-- Cabecera de la tabla -->
+        <div class="tabla-cabecera">
+          <div>
+            <h2 class="tabla-titulo">Validación y Resumen</h2>
+            <p class="tabla-subtitulo">
+              <i class="bi bi-file-earmark-excel-fill text-success me-1"></i>
+              {{ fileName }}
+              <span class="separador-cabecera">·</span>
+              {{ filas.length }} cometido(s) encontrado(s)
+            </p>
+          </div>
+          <!-- Indicadores de resumen cuando termina de cargar -->
+          <div v-if="!procesando && filas.length > 0" class="tabla-kpis">
+            <div class="kpi kpi--ok">
+              <i class="bi bi-check-circle-fill"></i>
+              <span>{{ filas.filter(f => erroresDeFila(f).length === 0).length }} válidos</span>
+            </div>
+            <div v-if="totalErrores > 0" class="kpi kpi--error">
+              <i class="bi bi-exclamation-circle-fill"></i>
+              <span>{{ filas.filter(f => erroresDeFila(f).length > 0).length }} con obs.</span>
             </div>
           </div>
-          <!-- Si sigue automatizando, show cursor blink -->
-          <div v-if="automatizando" class="consola-procesando mt-2">
-            <span class="cursor-blink">▌</span>
-            Ejecutando...
-          </div>
-        </template>
+        </div>
 
-        <!-- Sin problemas -->
-        <div v-else-if="problemas.length === 0" class="consola-ok d-flex flex-column align-items-center justify-content-center text-center p-4">
-          <i class="bi bi-check2-circle mb-3 text-success" style="font-size: 48px;"></i>
-          <div class="mb-3 text-white">
-            No se encontraron problemas en el archivo <strong>{{ fileName }}</strong>.
-          </div>
-          <button 
-            class="btn btn-primary px-4 py-2 fw-bold d-flex align-items-center gap-2 border-0"
-            style="background-color: var(--color-primary);"
-            :disabled="automatizando"
-            @click="empezarAutomatizacion"
-          >
-            <span v-if="automatizando" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-            <i v-else class="bi bi-play-circle-fill"></i>
-            <span>{{ automatizando ? 'Iniciando...' : 'Empezar automatización' }}</span>
+        <!-- Estado: procesando -->
+        <div v-if="procesando" class="tabla-procesando">
+          <div class="spinner-border text-primary mb-3" style="width:3rem;height:3rem" role="status"></div>
+          <p class="text-muted">{{ procesandoMensaje }}</p>
+          <p class="text-muted small">Analizando el archivo Excel...</p>
+        </div>
+
+        <!-- Tabla de cometidos -->
+        <div v-else-if="filas.length > 0" class="tabla-wrapper">
+          <table class="tabla-cometidos">
+            <thead>
+              <tr>
+                <th class="col-n">#</th>
+                <th class="col-conductor">RUT</th>
+                <th class="col-fechas">Fechas</th>
+                <th class="col-vehiculo">Vehículo</th>
+                <th class="col-viaticos">Cantidad de Días</th>
+                <th class="col-estado">Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="fila in filas"
+                :key="fila.numero_fila_excel"
+                :class="{ 'fila-con-error': erroresDeFila(fila).length > 0 }"
+              >
+                <!-- # Cometido -->
+                <td class="col-n">
+                  <span class="badge-fila">#{{ fila.numero_fila_excel - 2 }}</span>
+                </td>
+
+                <!-- RUT -->
+                <td class="col-conductor">
+                  <div class="conductor-bloque">
+                    <span class="conductor-rut" :class="{ 'celda-error': filaTieneError(fila, 'rut') }">
+                      {{ formatearRut(fila.rut) }}
+                      <i v-if="filaTieneError(fila, 'rut')" class="bi bi-exclamation-triangle-fill ms-1 text-danger"></i>
+                    </span>
+                    <!-- Sugerencia inline de RUT (corrección desde la tabla) -->
+                    <div v-if="!fila.rut_valido && fila.sugerencia_correccion_rut" class="sugerencia-inline">
+                      <i class="bi bi-lightbulb-fill text-warning"></i>
+                      <span>¿{{ sugerenciaRutConDv(fila) }}?</span>
+                      <button class="btn-corregir-inline"
+                        @click="corregirFilaDirectamente({ campo:'rut', sugerencia: fila.sugerencia_correccion_rut, fila_ref: fila })">
+                        Corregir
+                      </button>
+                    </div>
+                  </div>
+                </td>
+
+                <!-- Fechas -->
+                <td class="col-fechas">
+                  <div class="fechas-bloque"
+                    :class="{ 'celda-error': filaTieneError(fila,'fechas') || filaTieneError(fila,'fechainicio') || filaTieneError(fila,'fechatermino') }">
+                    <span class="fecha-chip">{{ fila.fechainicio || '—' }}</span>
+                    <i class="bi bi-arrow-right fecha-sep"></i>
+                    <span class="fecha-chip">{{ fila.fechatermino || '—' }}</span>
+                    <i v-if="filaTieneError(fila,'fechas')" class="bi bi-exclamation-triangle-fill text-danger ms-1"></i>
+                  </div>
+                </td>
+
+                <!-- Vehículo / Sigla -->
+                <td class="col-vehiculo">
+                  <div class="vehiculo-bloque">
+                    <span class="badge-sigla" :class="{ 'badge-sigla--error': filaTieneError(fila,'sigla') }">
+                      {{ fila.sigla || '—' }}
+                      <i v-if="filaTieneError(fila,'sigla')" class="bi bi-exclamation-triangle-fill ms-1"></i>
+                    </span>
+                    <!-- Sugerencia inline de sigla -->
+                    <div v-if="!fila.sigla_valida && fila.sugerencia_correccion_sigla" class="sugerencia-inline">
+                      <i class="bi bi-lightbulb-fill text-warning"></i>
+                      <span>¿{{ fila.sugerencia_correccion_sigla }}?</span>
+                      <button class="btn-corregir-inline"
+                        @click="corregirFilaDirectamente({ campo:'sigla', sugerencia: fila.sugerencia_correccion_sigla, fila_ref: fila })">
+                        Corregir
+                      </button>
+                    </div>
+                  </div>
+                </td>
+
+                <!-- Viáticos -->
+                <td class="col-viaticos">
+                  <div class="viaticos-bloque" :class="{ 'celda-error': filaTieneError(fila,'viaticos') }">
+                    <span class="viaticos-dias">
+                      {{ contarDiasSalida(fila.dias_salida) }} día(s)
+                      <i v-if="filaTieneError(fila,'viaticos')" class="bi bi-exclamation-triangle-fill text-danger ms-1"></i>
+                    </span>
+                    <span class="viaticos-detalle">{{ resumenViaticos(fila) }}</span>
+                  </div>
+                </td>
+
+                <!-- Estado de la fila -->
+                <td class="col-estado">
+                  <span v-if="erroresDeFila(fila).length === 0" class="badge-estado badge-estado--ok">
+                    <i class="bi bi-check-circle-fill"></i>Válido
+                  </span>
+                  <span v-else class="badge-estado badge-estado--error">
+                    <i class="bi bi-exclamation-circle-fill"></i>
+                    {{ erroresDeFila(fila).length }} obs.
+                  </span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Sin filas -->
+        <div v-else class="tabla-vacia">
+          <i class="bi bi-inbox" style="font-size:48px;color:var(--color-neutral)"></i>
+          <p class="mt-3 text-muted">No se encontraron registros en el archivo.</p>
+          <button class="btn btn-outline-primary mt-2" @click="volverAlInicio">
+            <i class="bi bi-arrow-left me-1"></i>Volver e intentar con otro archivo
           </button>
         </div>
 
-        <!-- Lista de problemas -->
-        <template v-else>
-          <div class="consola-intro">
-            Archivo: <span class="consola-filename">{{ fileName }}</span>
-            — {{ problemas.length }} problema(s) encontrado(s)
-          </div>
-          <div
-            v-for="(p, idx) in problemas"
-            :key="idx"
-            class="consola-linea py-2"
+        <!-- ── Botón de acción principal (CTA) ── -->
+        <div v-if="!procesando && filas.length > 0" class="cta-zona">
+          <p v-if="totalErrores > 0" class="cta-aviso">
+            <i class="bi bi-exclamation-triangle-fill me-2"></i>
+            Corrige los <strong>{{ totalErrores }}</strong> problema(s) detectado(s) para poder continuar
+          </p>
+          <button
+            class="btn btn-primary btn-cta"
+            :disabled="!todasValidas"
+            @click="empezarAutomatizacion"
           >
-            <div>
-              <span class="linea-prefijo">› </span>
-              <span class="linea-mensaje">{{ p.mensaje }}</span>
-            </div>
-          </div>
-        </template>
-      </div>
-    </main>
+            <i class="bi bi-play-circle-fill me-2"></i>
+            Iniciar Automatización ({{ filas.length }} cometido{{ filas.length > 1 ? 's' : '' }})
+          </button>
+        </div>
+
+      </main>
+    </div>
+
+
+    <!-- ══════════════════════════════════════════════════════ -->
+    <!-- ETAPA 2: EJECUCIÓN DEL BOT (COMPONENTE MODULAR)       -->
+    <!-- ══════════════════════════════════════════════════════ -->
+    <ValidacionDatosEtapa2
+      v-if="etapaActual === 2"
+      :filas="filas"
+      @avanzar-reporte="etapaActual = 3"
+      @cancelar="etapaActual = 1"
+    />
+
+
+    <!-- ══════════════════════════════════════════════════════ -->
+    <!-- ETAPA 3: FINALIZADO (COMPONENTE MODULAR)               -->
+    <!-- ══════════════════════════════════════════════════════ -->
+    <ValidacionDatosEtapa3
+      v-if="etapaActual === 3"
+      :filas="filas"
+      :fileName="fileName"
+      @volver-inicio="volverAlInicio"
+    />
 
   </div>
 </template>
 
 <style scoped>
-/* ── Layout principal ── */
+/* ══════════════════════════════════════════════════════════════ */
+/* Layout base                                                    */
+/* ══════════════════════════════════════════════════════════════ */
 .validacion-container {
+  height: calc(100vh - 57px);
   display: flex;
-  min-height: calc(100vh - 57px); /* descuenta el navbar */
+  flex-direction: column;
+  overflow: hidden;
   background-color: var(--color-white);
-  color: var(--color-black);
   font-family: var(--font-body);
-  position: relative;
+}
+
+/* ══════════════════════════════════════════════════════════════ */
+/* STEPPER                                                        */
+/* ══════════════════════════════════════════════════════════════ */
+.stepper-barra {
+  background-color: var(--color-tertiary);
+  padding: 20px 40px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.stepper-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  max-width: 700px;
+  margin: 0 auto;
+}
+
+.stepper-paso {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.paso-circulo {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  border: 2px solid rgba(255,255,255,0.25);
+  color: rgba(255,255,255,0.35);
+  background-color: transparent;
+  transition: all 0.3s ease;
+}
+
+.paso-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255,255,255,0.35);
+  white-space: nowrap;
+  letter-spacing: 0.3px;
+  transition: color 0.3s ease;
+}
+
+/* Activo */
+.paso--activo .paso-circulo {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-white);
+  box-shadow: 0 0 0 4px rgba(0,111,179,0.35);
+}
+.paso--activo .paso-label { color: var(--color-white); font-weight: 700; }
+
+/* Completado */
+.paso--completado .paso-circulo {
+  background-color: #1e7e53;
+  border-color: #1e7e53;
+  color: var(--color-white);
+}
+.paso--completado .paso-label { color: #6dddaa; }
+
+/* Línea conectora */
+.stepper-linea {
+  flex: 1;
+  height: 2px;
+  background-color: rgba(255,255,255,0.12);
+  margin: 0 12px;
+  margin-bottom: 22px;
+  transition: background-color 0.3s ease;
+}
+.linea--completa { background-color: #1e7e53; }
+
+/* ══════════════════════════════════════════════════════════════ */
+/* ETAPA 1: layout general                                        */
+/* ══════════════════════════════════════════════════════════════ */
+.etapa-layout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
 }
 
 /* ── Panel izquierdo ── */
 .panel-checklist {
-  width: 320px;
-  min-width: 260px;
-  padding: 48px 32px;
-  border-right: 1px solid rgba(0, 0, 0, 0.1);
+  width: 340px;
+  min-width: 300px;
+  flex-shrink: 0;
+  padding: 32px 24px;
+  border-right: 1px solid var(--color-neutral);
   display: flex;
   flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
 }
 
-.checklist-title {
+.checklist-titulo {
   font-family: var(--font-title);
-  font-size: 18px;
-  font-weight: 500;
+  font-size: 20px;
+  font-weight: 700;
   color: var(--color-black);
-  margin-bottom: 24px;
-  letter-spacing: 0.5px;
+  margin: 0;
+  letter-spacing: 0.3px;
 }
 
-.checklist-lista {
+.checklist-cargando {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 0;
+  text-align: center;
+}
+
+/* Grupos */
+.grupos-lista {
   list-style: none;
   padding: 0;
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-}
-
-.checklist-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-/* Primera línea del check: icono + label */
-.check-icono {
-  font-size: 16px;
-  margin-right: 10px;
-}
-
-.checklist-item > span,
-.checklist-item > .check-label {
-  display: inline;
-}
-
-/* La primera fila del item */
-.checklist-item {
-  font-size: 14px;
-  line-height: 1.4;
-}
-
-/* Los span de icono y label están dentro del li, así que ajustamos */
-.checklist-item .check-icono,
-.checklist-item .check-label {
-  vertical-align: middle;
-}
-
-/* Colores por estado */
-.estado-pendiente .check-label { color: var(--color-mid-gray); }
-.estado-pendiente .check-icono { color: var(--color-mid-gray); }
-
-.estado-revisando .check-label { color: var(--color-primary); }
-.estado-revisando .check-icono { color: var(--color-primary); }
-
-.estado-ok .check-label { color: #1e7e53; }
-.estado-ok .check-icono { color: #1e7e53; }
-
-.estado-error .check-label { color: #d93025; }
-.estado-error .check-icono { color: #d93025; }
-
-/* Sub-lista de errores clicables */
-.sub-errores {
-  list-style: none;
-  padding: 4px 0 0 24px;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.sub-error-item {
-  font-size: 12px;
-  color: #d93025;
-  opacity: 0.85;
-}
-
-.sub-error-item.clickeable {
-  cursor: pointer;
-  transition: opacity 0.15s;
-}
-.sub-error-item.clickeable:hover {
-  opacity: 1;
-  text-decoration: underline;
-}
-
-/* Animación spinner */
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
-}
-.spin {
-  display: inline-block;
-  animation: spin 0.8s linear infinite;
-}
-
-/* Acciones container en sidebar */
-.actions-container {
-  margin-top: auto;
-  display: flex;
-  flex-direction: column;
-}
-
-/* Botón volver */
-.btn-volver {
-  font-size: 14px;
-  color: var(--color-accent);
-  border-color: var(--color-accent);
-  background: transparent;
-}
-.btn-volver:hover {
-  background: rgba(255,255,255,0.08);
-  color: var(--color-white);
-  border-color: var(--color-white);
-}
-
-/* ── Panel derecho: consola ── */
-.panel-consola {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  padding: 48px 40px;
-}
-
-.consola-header {
-  font-family: var(--font-title);
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--color-white);
-  padding: 10px 16px;
-  border: 1px solid rgba(0, 0, 0, 0.15);
-  border-radius: 8px 8px 0 0;
-  background: #1e293b; /* Slate 800 */
-  display: flex;
-  align-items: center;
-}
-
-.consola-cuerpo {
-  flex: 1;
-  border: 1px solid rgba(0, 0, 0, 0.15);
-  border-top: none;
-  border-radius: 0 0 8px 8px;
-  background: #0f172a; /* Slate 900 dark bg */
-  padding: 20px 24px;
-  min-height: 320px;
-  font-family: 'Courier New', Courier, monospace;
-  font-size: 13px;
-  overflow-y: auto;
-}
-
-/* Procesando */
-.consola-procesando {
-  color: #6db3f2;
-  display: flex;
-  align-items: center;
   gap: 8px;
 }
 
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0; }
-}
-.cursor-blink {
-  animation: blink 1s step-end infinite;
-  color: #6db3f2;
+.grupo-item {
+  border-radius: 8px;
+  border: 1px solid var(--color-neutral);
+  overflow: hidden;
+  transition: border-color 0.2s;
 }
 
-/* Sin errores */
-.consola-ok {
-  color: #4caf82;
-  font-size: 14px;
-}
+.grupo--ok     { border-color: #d1fae5; }
+.grupo--error  { border-color: #fecaca; }
+.grupo--revisando { border-color: #bfdbfe; }
 
-/* Intro */
-.consola-intro {
-  color: var(--color-accent);
-  margin-bottom: 16px;
-  font-size: 12px;
-}
-.consola-filename {
-  color: var(--color-white);
-  font-weight: bold;
-}
-
-/* Líneas de problemas */
-.consola-linea {
+.grupo-cabecera {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px;
-  padding: 6px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  color: var(--color-secondary);
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
 }
 
-.consola-linea:last-child {
-  border-bottom: none;
-}
-
-.linea-clickeable {
-  cursor: pointer;
-  transition: background 0.15s;
-  border-radius: 4px;
-  padding: 6px 4px;
-}
-.linea-clickeable:hover {
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.linea-prefijo { color: var(--color-accent); }
-.linea-fila    { color: var(--color-white); font-weight: bold; }
-.linea-mensaje { color: var(--color-secondary); flex: 1; }
-
-.linea-badge-sugerencia {
-  font-size: 11px;
-  background: rgba(168, 183, 199, 0.2);
-  color: #f5d76e;
-  border: 1px solid rgba(245, 215, 110, 0.4);
-  border-radius: 4px;
-  padding: 2px 8px;
-  white-space: nowrap;
-}
-
-/* ── Modal ── */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(10, 19, 45, 0.75);
-  backdrop-filter: blur(4px);
+.grupo-icono {
+  font-size: 18px;
+  flex-shrink: 0;
+  width: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
 }
 
-.modal-box {
-  background: #141e38;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 12px;
-  width: 480px;
-  max-width: 90vw;
-  box-shadow: 0 24px 60px rgba(0,0,0,0.5);
+.grupo--pendiente  .grupo-icono { color: var(--color-mid-gray); }
+.grupo--revisando  .grupo-icono { color: var(--color-primary); }
+.grupo--ok         .grupo-icono { color: #059669; }
+.grupo--error      .grupo-icono { color: #dc2626; }
+
+.grupo-texto {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
 }
 
-.modal-box-header {
-  padding: 18px 24px;
-  border-bottom: 1px solid rgba(255,255,255,0.1);
+.grupo-nombre {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-black);
+}
+
+.grupo--pendiente .grupo-nombre { color: var(--color-mid-gray); }
+.grupo--ok        .grupo-nombre { color: #065f46; }
+.grupo--error     .grupo-nombre { color: #991b1b; }
+
+.grupo-desc {
+  font-size: 12px;
+  color: var(--color-mid-gray);
+}
+
+.grupo-conteo {
+  background-color: #dc2626;
+  color: white;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Errores dentro del grupo */
+.errores-lista {
+  list-style: none;
+  padding: 0 12px 10px 44px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid #fecaca;
+  padding-top: 8px;
+}
+
+.error-item { display: flex; flex-direction: column; gap: 4px; }
+
+.error-cabecera {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #dc2626;
+}
+
+.error-valor { font-weight: 600; }
+.error-fila  { color: var(--color-mid-gray); font-size: 10px; margin-left: auto; }
+
+/* Sugerencia */
+.sugerencia-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background-color: #1e293b;
+  border: 1px solid #ca8a04;
+  border-radius: 4px;
+  padding: 4px 8px;
+  gap: 6px;
+}
+
+.sugerencia-texto {
+  font-size: 11px;
+  color: #fbbf24;
+  flex: 1;
+}
+
+.btn-corregir {
+  background-color: #ca8a04;
+  color: #111;
+  border: none;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.15s;
+}
+.btn-corregir:hover { background-color: #f59e0b; }
+
+/* Acciones del sidebar */
+.sidebar-acciones {
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-neutral);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Animación spin */
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.spin { display: inline-block; animation: spin 0.8s linear infinite; }
+
+/* ── Panel derecho: Tabla ── */
+.panel-tabla {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.tabla-cabecera {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 28px 32px 16px;
+  border-bottom: 1px solid var(--color-neutral);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.tabla-titulo {
   font-family: var(--font-title);
-  font-size: 16px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-black);
+  margin: 0 0 4px;
+}
+
+.tabla-subtitulo {
+  font-size: 13px;
+  color: var(--color-mid-gray);
+  margin: 0;
+}
+
+.separador-cabecera { margin: 0 6px; color: var(--color-neutral); }
+
+/* KPIs de resumen */
+.tabla-kpis {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.kpi {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 20px;
+}
+
+.kpi--ok    { background-color: #d1fae5; color: #065f46; }
+.kpi--error { background-color: #fee2e2; color: #991b1b; }
+
+/* Estado procesando */
+.tabla-procesando {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-mid-gray);
+  gap: 4px;
+}
+
+/* Wrapper de la tabla */
+.tabla-wrapper {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+
+.tabla-cometidos {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+.tabla-cometidos thead tr {
+  background-color: var(--color-tertiary);
   color: var(--color-white);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.tabla-cometidos th {
+  padding: 14px 18px;
+  font-family: var(--font-title);
+  font-weight: 500;
+  font-size: 13px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.tabla-cometidos td {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--color-neutral);
+  vertical-align: middle;
+}
+
+.tabla-cometidos tbody tr:hover { background-color: #f8fafc; }
+
+/* Fila con error: fondo levemente rosado */
+.fila-con-error { background-color: #fff7f7 !important; }
+.fila-con-error:hover { background-color: #fff0f0 !important; }
+
+/* Columnas */
+.col-n        { width: 64px;   text-align: center; }
+.col-conductor { min-width: 160px; }
+.col-fechas   { width: 220px; white-space: nowrap; }
+.col-vehiculo { width: 160px; }
+.col-viaticos { width: 180px; }
+.col-estado   { width: 120px; text-align: center; }
+
+/* Badge de número de fila */
+.badge-fila {
+  background-color: #f1f5f9;
+  color: var(--color-dark-gray);
+  border-radius: 4px;
+  padding: 3px 9px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: 'Courier New', monospace;
+}
+
+/* RUT */
+.conductor-bloque { display: flex; flex-direction: column; gap: 4px; }
+.conductor-rut {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-dark-gray);
+  font-family: 'Courier New', monospace;
+  letter-spacing: 0.3px;
+}
+
+/* Celda con error */
+.celda-error {
+  color: #dc2626 !important;
+  background-color: #fff1f2;
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+/* Fechas — siempre en una sola línea */
+.fechas-bloque {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+.fecha-chip {
+  background-color: #f1f5f9;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 13px;
+  color: var(--color-dark-gray);
+  font-family: 'Courier New', monospace;
+  white-space: nowrap;
+}
+.fecha-sep { color: var(--color-mid-gray); font-size: 14px; flex-shrink: 0; }
+
+/* Vehículo / Sigla */
+.vehiculo-bloque { display: flex; flex-direction: column; gap: 4px; }
+
+.badge-sigla {
+  display: inline-flex;
+  align-items: center;
+  background-color: #f0f4f8;
+  color: var(--color-dark-gray);
+  border: 1px solid #d0dae3;
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: 'Courier New', monospace;
+  letter-spacing: 0.5px;
+}
+
+.badge-sigla--error {
+  background-color: #fee2e2;
+  border-color: #fca5a5;
+  color: #dc2626;
+}
+
+/* Viáticos */
+.viaticos-bloque { display: flex; flex-direction: column; gap: 2px; }
+.viaticos-dias   { font-size: 13px; font-weight: 600; color: var(--color-black); display: flex; align-items: center; }
+.viaticos-detalle { font-size: 11px; color: var(--color-mid-gray); }
+
+/* Sugerencia inline (en la tabla) — compacta, no se estira */
+.sugerencia-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+  background-color: #1e293b;
+  border: 1px solid #ca8a04;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  width: fit-content;
+  max-width: 100%;
+}
+.sugerencia-inline span { color: #fbbf24; white-space: nowrap; }
+
+.btn-corregir-inline {
+  background-color: #ca8a04;
+  color: #111;
+  border: none;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 7px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.btn-corregir-inline:hover { background-color: #f59e0b; }
+
+/* Badges de estado de la fila */
+.badge-estado {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 12px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.badge-estado--ok    { background-color: #d1fae5; color: #065f46; }
+.badge-estado--error { background-color: #fee2e2; color: #991b1b; }
+
+/* Tabla vacía */
+.tabla-vacia {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px;
+  color: var(--color-mid-gray);
+}
+
+/* ── CTA Principal ── */
+.cta-zona {
+  padding: 20px 32px 28px;
+  border-top: 1px solid var(--color-neutral);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  background-color: #fafbfc;
+}
+
+.cta-aviso {
+  margin: 0;
+  font-size: 14px;
+  color: #dc2626;
+  background-color: #fff1f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  padding: 8px 16px;
+  text-align: center;
+}
+
+.btn-cta {
+  padding: 14px 48px;
+  font-size: 16px;
+  font-weight: 700;
+  border-radius: 8px;
+  letter-spacing: 0.3px;
+  transition: all 0.2s ease;
   display: flex;
   align-items: center;
 }
 
-.modal-box-body {
-  padding: 24px;
+.btn-cta:not(:disabled):hover {
+  box-shadow: 0 6px 20px rgba(0, 111, 179, 0.3);
+  transform: translateY(-1px);
 }
 
-.modal-campo-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-  color: var(--color-mid-gray);
-  margin-bottom: 4px;
+
+/* ── Responsividad general ── */
+/* Pantallas grandes (1280px+): más espacio en el checklist */
+@media (min-width: 1280px) {
+  .panel-checklist  { width: 360px; }
+  .checklist-titulo { font-size: 21px; }
+  .grupo-nombre     { font-size: 15px; }
+  .tabla-cometidos  { font-size: 15px; }
 }
 
-.modal-campo-valor {
-  font-size: 15px;
-  font-weight: 500;
-  margin-bottom: 0;
+/* Pantallas muy grandes (1600px+): escala adicional */
+@media (min-width: 1600px) {
+  .panel-checklist  { width: 400px; }
+  .grupo-nombre     { font-size: 17px; }
+  .grupo-desc       { font-size: 14px; }
+  .tabla-cometidos  { font-size: 16px; }
+  .conductor-rut    { font-size: 17px; }
+  .fecha-chip       { font-size: 14px; }
 }
 
-.error-text { color: var(--color-secondary); }
-.ok-text    { color: #4caf82; }
-
-.modal-nota {
-  font-size: 12px;
-  color: var(--color-mid-gray);
-  margin-top: 12px;
-  font-style: italic;
-}
-
-.modal-box-footer {
-  padding: 16px 24px;
-  border-top: 1px solid rgba(255,255,255,0.1);
-  display: flex;
-  justify-content: flex-end;
-}
-
-/* Transición del modal */
-.modal-fade-enter-active,
-.modal-fade-leave-active {
-  transition: opacity 0.2s ease;
-}
-.modal-fade-enter-from,
-.modal-fade-leave-to {
-  opacity: 0;
+/* Pantallas compactas (menos de 1024px): checklist más estrecho */
+@media (max-width: 1024px) {
+  .panel-checklist  { width: 260px; min-width: 220px; }
+  .etapa-layout     { flex-direction: column; overflow: auto; }
+  .panel-checklist  { width: 100%; border-right: none; border-bottom: 1px solid var(--color-neutral); padding: 20px; }
 }
 </style>

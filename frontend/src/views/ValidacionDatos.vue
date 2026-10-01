@@ -92,13 +92,33 @@ function sumarViaticos(fila) {
   }, 0)
 }
 
-// Formatea RUT chileno sin dígito verificador separado: "13652729" → "1.365.272-9"
+// Formatea RUT chileno:
+// - Si viene con guión ("13193029-9"), separa cuerpo y DV: "13.193.029-9"
+// - Si viene sin guión ("13652729"), es el cuerpo directo del conductor: "13.652.729"
 function formatearRut(rut) {
-  const str = String(rut ?? '').trim()
-  if (!/^\d{6,8}[0-9Kk]$/.test(str)) return str
-  const dv = str.slice(-1).toUpperCase()
-  const cuerpoFormateado = str.slice(0, -1).replace(/\B(?=(\d{3})+(?!\d))/g, '.')
-  return `${cuerpoFormateado}-${dv}`
+  if (rut == null) return ''
+  const str = String(rut).trim()
+  if (!str) return ''
+  if (str.includes('-')) {
+    const [cuerpo, dv] = str.split('-')
+    const cuerpoLimpio = cuerpo.replace(/\./g, '')
+    const cuerpoFormateado = cuerpoLimpio.replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+    return `${cuerpoFormateado}-${dv.toUpperCase()}`
+  }
+  const soloDigitos = str.replace(/\./g, '')
+  if (/^\d+$/.test(soloDigitos)) {
+    return soloDigitos.replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+  }
+  return str
+}
+
+// Presentación de la sugerencia conservando el DV original de la celda
+function sugerenciaRutConDv(fila) {
+  if (!fila?.sugerencia_correccion_rut) return ''
+  const valActual = String(fila.rut || '').trim()
+  const dvOriginal = valActual.includes('-') ? valActual.split('-')[1] : ''
+  const rutConDv = dvOriginal ? `${fila.sugerencia_correccion_rut}-${dvOriginal}` : fila.sugerencia_correccion_rut
+  return formatearRut(rutConDv)
 }
 
 // Resumen de viáticos para la columna de la tabla
@@ -115,24 +135,22 @@ function resumenViaticos(fila) {
   return partes.join(' · ') || '—'
 }
 
-// Lista de errores semánticos de una fila específica (para la tabla)
+// Lista de errores semánticos de una fila específica según las validaciones del backend
 function erroresDeFila(fila) {
   const e = []
   if (fila.rut_valido === false)   e.push('rut')
   if (fila.sigla_valida === false) e.push('sigla')
-  const totalDias = contarDiasSalida(fila.dias_salida)
-  const sumaPorc  = sumarViaticos(fila)
-  if (totalDias > 0 && Math.abs(totalDias - sumaPorc) > 0.01) e.push('viaticos')
-  const reqs = ['fechainicio', 'fechatermino', 'dias_salida', 'sigla']
-  for (const c of reqs) {
-    if (!fila[c] || String(fila[c]).trim() === '') {
-      if (!e.includes(c)) e.push(c)
+  if (fila.viaticos_validos === false) e.push('viaticos')
+  if (fila.fechas_validas === false) e.push('fechas')
+  if (fila.admin_valido === false) {
+    for (const c of ['fechainicio', 'fechatermino', 'dias_salida']) {
+      if (!fila[c] || String(fila[c]).trim() === '') {
+        if (!e.includes(c)) e.push(c)
+      }
     }
-  }
-  if (fila.fechainicio && fila.fechatermino) {
-    const ini = new Date(String(fila.fechainicio).split('/').reverse().join('-'))
-    const ter = new Date(String(fila.fechatermino).split('/').reverse().join('-'))
-    if (!isNaN(ini) && !isNaN(ter) && ini > ter) e.push('fechas')
+    if (!fila.sigla || String(fila.sigla).trim() === '') {
+      if (!e.includes('sigla')) e.push('sigla')
+    }
   }
   return e
 }
@@ -181,74 +199,67 @@ async function animarTodosLosGrupos() {
   // Grupo 1 — Identidad y Conductor (validación backend: rut)
   await animarGrupo('identidad', (fila) => {
     if (fila.rut_valido !== false) return []
-    return [{
+    const msgs = fila.errores_por_grupo?.identidad?.length
+      ? fila.errores_por_grupo.identidad
+      : [(fila.errores || []).find(e => e.toLowerCase().includes('rut')) || 'RUT inválido o no registrado']
+    return msgs.map(m => ({
       fila:         fila.numero_fila_excel,
       campo:        'rut',
-      mensaje:      (fila.errores || []).find(e => e.toLowerCase().includes('rut')) || 'RUT inválido o no registrado',
+      mensaje:      m,
       sugerencia:   fila.sugerencia_correccion_rut,
       valor_actual: fila.rut,
       fila_ref:     fila,
-    }]
+    }))
   }, 900)
 
   // Grupo 2 — Vehículo (validación backend: sigla)
   await animarGrupo('vehiculo', (fila) => {
     if (fila.sigla_valida !== false) return []
-    return [{
+    const msgs = fila.errores_por_grupo?.vehiculo?.length
+      ? fila.errores_por_grupo.vehiculo
+      : [(fila.errores || []).find(e => e.toLowerCase().includes('sigla')) || 'Sigla/patente inválida o no registrada']
+    return msgs.map(m => ({
       fila:         fila.numero_fila_excel,
       campo:        'sigla',
-      mensaje:      (fila.errores || []).find(e => e.toLowerCase().includes('sigla')) || 'Sigla/patente inválida o no registrada',
+      mensaje:      m,
       sugerencia:   fila.sugerencia_correccion_sigla,
       valor_actual: fila.sigla,
       fila_ref:     fila,
-    }]
+    }))
   }, 900)
 
-  // Grupo 3 — Coherencia de Viáticos (validación local: matemática)
+  // Grupo 3 — Coherencia de Viáticos (validación backend)
   await animarGrupo('viaticos', (fila) => {
+    if (fila.viaticos_validos !== false) return []
+    const msgs = fila.errores_por_grupo?.viaticos?.length
+      ? fila.errores_por_grupo.viaticos
+      : ['Incoherencia en días de salida vs porcentajes de viático']
     const totalDias = contarDiasSalida(fila.dias_salida)
     const sumaPorc  = sumarViaticos(fila)
-    if (totalDias === 0 || Math.abs(totalDias - sumaPorc) <= 0.01) return []
-    return [{
+    return msgs.map(m => ({
       fila:         fila.numero_fila_excel,
       campo:        'viaticos',
-      mensaje:      `Fila ${fila.numero_fila_excel}: se indicaron ${totalDias} día(s) pero los porcentajes suman ${sumaPorc}`,
+      mensaje:      `Fila ${fila.numero_fila_excel}: ${m}`,
       sugerencia:   null,
       valor_actual: `${totalDias} días / suma ${sumaPorc}`,
       fila_ref:     fila,
-    }]
+    }))
   }, 800)
 
-  // Grupo 4 — Datos Administrativos (validación local: campos requeridos y fechas)
+  // Grupo 4 — Datos Administrativos (validación backend)
   await animarGrupo('admin', (fila) => {
-    const errores = []
-    const reqs = [
-      { campo: 'fechainicio',  label: 'Fecha de inicio' },
-      { campo: 'fechatermino', label: 'Fecha de término' },
-      { campo: 'dias_salida',  label: 'Días de salida' },
-      { campo: 'sigla',        label: 'Sigla de vehículo' },
-    ]
-    for (const r of reqs) {
-      if (!fila[r.campo] || String(fila[r.campo]).trim() === '') {
-        errores.push({
-          fila: fila.numero_fila_excel, campo: r.campo,
-          mensaje: `Fila ${fila.numero_fila_excel}: "${r.label}" está vacío`,
-          sugerencia: null, valor_actual: '(vacío)', fila_ref: fila,
-        })
-      }
-    }
-    if (fila.fechainicio && fila.fechatermino) {
-      const ini = new Date(String(fila.fechainicio).split('/').reverse().join('-'))
-      const ter = new Date(String(fila.fechatermino).split('/').reverse().join('-'))
-      if (!isNaN(ini) && !isNaN(ter) && ini > ter) {
-        errores.push({
-          fila: fila.numero_fila_excel, campo: 'fechas',
-          mensaje: `Fila ${fila.numero_fila_excel}: fecha de inicio es posterior a fecha de término`,
-          sugerencia: null, valor_actual: `${fila.fechainicio} > ${fila.fechatermino}`, fila_ref: fila,
-        })
-      }
-    }
-    return errores
+    if (fila.admin_valido !== false && fila.fechas_validas !== false) return []
+    const msgs = fila.errores_por_grupo?.admin?.length
+      ? fila.errores_por_grupo.admin
+      : ['Datos administrativos o fechas con observaciones']
+    return msgs.map(m => ({
+      fila:         fila.numero_fila_excel,
+      campo:        m.toLowerCase().includes('fecha') ? 'fechas' : 'admin',
+      mensaje:      `Fila ${fila.numero_fila_excel}: ${m}`,
+      sugerencia:   null,
+      valor_actual: '(observado)',
+      fila_ref:     fila,
+    }))
   }, 800)
 }
 
@@ -267,41 +278,60 @@ function recalcularGrupos() {
   const defs = [
     {
       id: 'identidad',
-      fn: (fila) => fila.rut_valido === false ? [{
-        fila: fila.numero_fila_excel, campo: 'rut',
-        mensaje: 'RUT inválido', sugerencia: fila.sugerencia_correccion_rut,
-        valor_actual: fila.rut, fila_ref: fila,
-      }] : [],
+      fn: (fila) => {
+        if (fila.rut_valido !== false) return []
+        const msgs = fila.errores_por_grupo?.identidad?.length
+          ? fila.errores_por_grupo.identidad
+          : ['RUT inválido']
+        return msgs.map(m => ({
+          fila: fila.numero_fila_excel, campo: 'rut',
+          mensaje: m, sugerencia: fila.sugerencia_correccion_rut,
+          valor_actual: fila.rut, fila_ref: fila,
+        }))
+      },
     },
     {
       id: 'vehiculo',
-      fn: (fila) => fila.sigla_valida === false ? [{
-        fila: fila.numero_fila_excel, campo: 'sigla',
-        mensaje: 'Sigla inválida', sugerencia: fila.sugerencia_correccion_sigla,
-        valor_actual: fila.sigla, fila_ref: fila,
-      }] : [],
+      fn: (fila) => {
+        if (fila.sigla_valida !== false) return []
+        const msgs = fila.errores_por_grupo?.vehiculo?.length
+          ? fila.errores_por_grupo.vehiculo
+          : ['Sigla inválida']
+        return msgs.map(m => ({
+          fila: fila.numero_fila_excel, campo: 'sigla',
+          mensaje: m, sugerencia: fila.sugerencia_correccion_sigla,
+          valor_actual: fila.sigla, fila_ref: fila,
+        }))
+      },
     },
     {
       id: 'viaticos',
       fn: (fila) => {
+        if (fila.viaticos_validos !== false) return []
+        const msgs = fila.errores_por_grupo?.viaticos?.length
+          ? fila.errores_por_grupo.viaticos
+          : ['Incoherencia de viáticos']
         const td = contarDiasSalida(fila.dias_salida)
         const sp = sumarViaticos(fila)
-        return td > 0 && Math.abs(td - sp) > 0.01 ? [{
+        return msgs.map(m => ({
           fila: fila.numero_fila_excel, campo: 'viaticos',
-          mensaje: `${td} días vs ${sp} en porcentajes`, sugerencia: null,
-          valor_actual: String(sp), fila_ref: fila,
-        }] : []
+          mensaje: m, sugerencia: null,
+          valor_actual: `${td} días / suma ${sp}`, fila_ref: fila,
+        }))
       },
     },
     {
       id: 'admin',
       fn: (fila) => {
-        const e = []
-        for (const c of ['fechainicio', 'fechatermino', 'dias_salida', 'sigla']) {
-          if (!fila[c] || String(fila[c]).trim() === '')
-            e.push({ fila: fila.numero_fila_excel, campo: c, mensaje: `"${c}" vacío`, sugerencia: null, valor_actual: '(vacío)', fila_ref: fila })
-        }
-        return e
+        if (fila.admin_valido !== false && fila.fechas_validas !== false) return []
+        const msgs = fila.errores_por_grupo?.admin?.length
+          ? fila.errores_por_grupo.admin
+          : ['Datos administrativos observados']
+        return msgs.map(m => ({
+          fila: fila.numero_fila_excel,
+          campo: m.toLowerCase().includes('fecha') ? 'fechas' : 'admin',
+          mensaje: m, sugerencia: null, valor_actual: '(observado)', fila_ref: fila,
+        }))
       },
     },
   ]
@@ -317,10 +347,25 @@ function recalcularGrupos() {
 // ─── Auto-corrección ──────────────────────────────────────────
 function corregirFilaDirectamente(p) {
   if (!p?.sugerencia) return
-  p.fila_ref[p.campo] = p.sugerencia
-  p.fila_ref[p.campo === 'sigla' ? 'sigla_valida' : `${p.campo}_valido`] = true
-  if (p.campo === 'rut')   p.fila_ref.sugerencia_correccion_rut   = null
-  if (p.campo === 'sigla') p.fila_ref.sugerencia_correccion_sigla = null
+  if (p.campo === 'rut') {
+    const valActual = String(p.fila_ref.rut || '').trim()
+    const dvOriginal = valActual.includes('-') ? valActual.split('-')[1] : ''
+    p.fila_ref.rut = dvOriginal ? `${p.sugerencia}-${dvOriginal}` : p.sugerencia
+    p.fila_ref.rut_valido = true
+    p.fila_ref.sugerencia_correccion_rut = null
+    if (p.fila_ref.errores_por_grupo?.identidad) {
+      p.fila_ref.errores_por_grupo.identidad = []
+    }
+  } else {
+    p.fila_ref[p.campo] = p.sugerencia
+    p.fila_ref[p.campo === 'sigla' ? 'sigla_valida' : `${p.campo}_valido`] = true
+    if (p.campo === 'sigla') {
+      p.fila_ref.sugerencia_correccion_sigla = null
+      if (p.fila_ref.errores_por_grupo?.vehiculo) {
+        p.fila_ref.errores_por_grupo.vehiculo = []
+      }
+    }
+  }
   p.fila_ref.errores = (p.fila_ref.errores || []).filter(e =>
     !e.toLowerCase().includes(p.campo === 'rut' ? 'rut' : 'sigla')
   )
@@ -331,15 +376,23 @@ function corregirFilaDirectamente(p) {
 function aplicarTodasLasSugerencias() {
   filas.value.forEach(f => {
     if (!f.rut_valido && f.sugerencia_correccion_rut) {
-      f.rut = f.sugerencia_correccion_rut
+      const valActual = String(f.rut || '').trim()
+      const dvOriginal = valActual.includes('-') ? valActual.split('-')[1] : ''
+      f.rut = dvOriginal ? `${f.sugerencia_correccion_rut}-${dvOriginal}` : f.sugerencia_correccion_rut
       f.rut_valido = true
       f.sugerencia_correccion_rut = null
+      if (f.errores_por_grupo?.identidad) {
+        f.errores_por_grupo.identidad = []
+      }
       f.errores = (f.errores || []).filter(e => !e.toLowerCase().includes('rut'))
     }
     if (!f.sigla_valida && f.sugerencia_correccion_sigla) {
       f.sigla = f.sugerencia_correccion_sigla
       f.sigla_valida = true
       f.sugerencia_correccion_sigla = null
+      if (f.errores_por_grupo?.vehiculo) {
+        f.errores_por_grupo.vehiculo = []
+      }
       f.errores = (f.errores || []).filter(e => !e.toLowerCase().includes('sigla'))
     }
   })
@@ -581,7 +634,7 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
                     <!-- Sugerencia inline de RUT (corrección desde la tabla) -->
                     <div v-if="!fila.rut_valido && fila.sugerencia_correccion_rut" class="sugerencia-inline">
                       <i class="bi bi-lightbulb-fill text-warning"></i>
-                      <span>¿{{ fila.sugerencia_correccion_rut }}?</span>
+                      <span>¿{{ sugerenciaRutConDv(fila) }}?</span>
                       <button class="btn-corregir-inline"
                         @click="corregirFilaDirectamente({ campo:'rut', sugerencia: fila.sugerencia_correccion_rut, fila_ref: fila })">
                         Corregir

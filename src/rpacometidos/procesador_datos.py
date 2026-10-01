@@ -203,7 +203,7 @@ def validar_registro(datos_entrantes):
             candidatos,
             scorer=fuzz.ratio
         )
-        if mejor_coincidencia and mejor_coincidencia[1] >= 80:
+        if mejor_coincidencia and mejor_coincidencia[1] >= 70:
             rut_coincidente = mejor_coincidencia[0]
             driver_row = df_conocidos[df_conocidos['rut'] == rut_coincidente].iloc[0]
 
@@ -266,7 +266,7 @@ def validar_registro(datos_entrantes):
                 candidatos,
                 scorer=fuzz.ratio
             )
-            if mejor_coincidencia and mejor_coincidencia[1] >= 80:
+            if mejor_coincidencia and mejor_coincidencia[1] >= 70:
                 resultados_validacion['sugerencia_correccion_rut'] = mejor_coincidencia[0]
 
         # Validación sigla individual
@@ -282,17 +282,20 @@ def validar_registro(datos_entrantes):
                 err_fmt = f"Sigla con formato incorrecto: {sigla_str}"
                 resultados_validacion['errores'].append(err_fmt)
                 errores_por_grupo['vehiculo'].append(err_fmt)
-            err_sig = f"La sigla '{sigla_str}' no fue encontrada en los registros conocidos."
-            resultados_validacion['errores'].append(err_sig)
-            errores_por_grupo['vehiculo'].append(err_sig)
-            
-            mejor_coincidencia = process.extractOne(
-                sigla_str,
-                siglas_conocidas,
-                scorer=fuzz.ratio
-            )
-            if mejor_coincidencia and mejor_coincidencia[1] >= 60:
-                resultados_validacion['sugerencia_correccion_sigla'] = mejor_coincidencia[0]
+            if sigla_str in siglas_conocidas:
+                resultados_validacion['sigla_valida'] = True
+            else:
+                err_sig = f"La sigla '{sigla_str}' no fue encontrada en los registros conocidos."
+                resultados_validacion['errores'].append(err_sig)
+                errores_por_grupo['vehiculo'].append(err_sig)
+                
+                mejor_coincidencia = process.extractOne(
+                    sigla_str,
+                    siglas_conocidas,
+                    scorer=fuzz.ratio
+                )
+                if mejor_coincidencia and mejor_coincidencia[1] >= 60:
+                    resultados_validacion['sugerencia_correccion_sigla'] = mejor_coincidencia[0]
 
     # 3. Validación de coherencia de viáticos (Días de salida vs suma porcentajes)
     total_dias = contar_dias_salida(datos_entrantes.get('dias_salida'))

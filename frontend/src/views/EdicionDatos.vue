@@ -156,18 +156,23 @@ async function confirmarEliminar() {
 }
 
 // ─── Formateo de RUT chileno (solo visualización) ────────────
-// Toma el último dígito como DV y aplica puntos al resto.
-// Si el RUT no cumple el patrón esperado (RUTs de prueba, etc.) lo devuelve sin cambios.
+// - Si viene con guión ("13193029-9"), separa cuerpo y DV: "13.193.029-9"
+// - Si viene sin guión ("13652729"), es el cuerpo directo del conductor: "13.652.729"
 function formatearRut(rut) {
+  if (rut == null) return ''
   const str = String(rut).trim()
-  // Acepta 7-9 caracteres: dígitos, con el último siendo 0-9 o K
-  if (!/^\d{6,8}[0-9Kk]$/.test(str)) return str
-
-  const dv     = str.slice(-1).toUpperCase()
-  const cuerpo = str.slice(0, -1)
-  // Inserta punto cada 3 dígitos desde la derecha
-  const cuerpoFormateado = cuerpo.replace(/\B(?=(\d{3})+(?!\d))/g, '.')
-  return `${cuerpoFormateado}-${dv}`
+  if (!str) return ''
+  if (str.includes('-')) {
+    const [cuerpo, dv] = str.split('-')
+    const cuerpoLimpio = cuerpo.replace(/\./g, '')
+    const cuerpoFormateado = cuerpoLimpio.replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+    return `${cuerpoFormateado}-${dv.toUpperCase()}`
+  }
+  const soloDigitos = str.replace(/\./g, '')
+  if (/^\d+$/.test(soloDigitos)) {
+    return soloDigitos.replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+  }
+  return str
 }
 
 // ─── Navegación ───────────────────────────────────────────────

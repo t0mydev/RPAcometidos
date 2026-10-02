@@ -26,7 +26,8 @@ def agregar_persona_firmador(pagina, nombre, rol):
 
     pagina.locator('#ddl_Rol').select_option(rol)
     pagina.locator('#btnAgregarPersona').click()
-    time.sleep(0.5)
+    pagina.locator('.swal2-container').wait_for(state="hidden", timeout=10000)
+    time.sleep(0.2)
 
 def login_firmador(pagina, usuario, clave):
     """

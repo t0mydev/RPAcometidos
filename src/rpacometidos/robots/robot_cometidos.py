@@ -1,11 +1,7 @@
 import time
 from datetime import datetime, timedelta
-from playwright.sync_api import sync_playwright
 from rpacometidos.robots.base import (
     guardar_progreso,
-    cargar_datos_automatizacion,
-    guardar_datos_automatizacion,
-    cargar_credenciales,
     obtener_ruta_pdf_temporal
 )
 
@@ -228,44 +224,3 @@ def procesar_un_cometido(pagina, registro, fila=1, total_registros=1):
 
     time.sleep(2)
     return str(ruta_pdf)
-
-def procesar_cometidos_en_pagina(pagina, datos_excel, usuario, clave):
-    """
-    Ejecuta el flujo de cometidos dentro de una página (pestaña) de Playwright.
-    """
-    total_registros = len(datos_excel)
-    login_cometidos(pagina, usuario, clave)
-
-    # Iterar por fila y completar cada cometido del Excel
-    for fila, registro in enumerate(datos_excel, start=1):
-        procesar_un_cometido(pagina, registro, fila, total_registros)
-        guardar_datos_automatizacion(datos_excel)
-
-    guardar_progreso(total_registros, total_registros, "Cometidos", "completado", detalle="Automatización de cometidos finalizada exitosamente")
-
-def ejecutar_cometidos(datos_excel=None, pagina=None, headless=False):
-    """
-    Punto de entrada para ejecutar la automatización de cometidos.
-    Puede ejecutarse independientemente o reutilizando una página de Playwright existente.
-    """
-    if datos_excel is None:
-        datos_excel = cargar_datos_automatizacion()
-
-    usuario, clave = cargar_credenciales(sistema="cometidos")
-
-    if pagina is not None:
-        return procesar_cometidos_en_pagina(pagina, datos_excel, usuario, clave)
-
-    try:
-        with sync_playwright() as p:
-            navegador = p.firefox.launch(headless=headless)
-            contexto = navegador.new_context()
-            pagina = contexto.new_page()
-            procesar_cometidos_en_pagina(pagina, datos_excel, usuario, clave)
-            navegador.close()
-    except Exception as e:
-        guardar_progreso(0, len(datos_excel), str(e), "error")
-        raise e
-
-if __name__ == "__main__":
-    ejecutar_cometidos()

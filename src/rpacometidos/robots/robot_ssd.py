@@ -1,12 +1,8 @@
 import time
 import csv
 import re
-from playwright.sync_api import sync_playwright
 from rpacometidos.robots.base import (
     guardar_progreso,
-    cargar_datos_automatizacion,
-    guardar_datos_automatizacion,
-    cargar_credenciales,
     BASE_DIR
 )
 
@@ -156,44 +152,3 @@ def procesar_un_ssd(pagina, registro, fila=1, total_registros=1):
 
     time.sleep(1)
     return numero_proceso
-
-def procesar_ssd_en_pagina(pagina, datos_excel, usuario, clave):
-    """
-    Ejecuta el flujo de SSD dentro de una página (pestaña) de Playwright.
-    """
-    total_registros = len(datos_excel)
-    login_ssd(pagina, usuario, clave)
-
-    # Procesar cada registro para generar el número de proceso SSD
-    for fila, registro in enumerate(datos_excel, start=1):
-        procesar_un_ssd(pagina, registro, fila, total_registros)
-        guardar_datos_automatizacion(datos_excel)
-
-    guardar_progreso(total_registros, total_registros, "SSD", "completado", detalle="Automatización de SSD finalizada exitosamente")
-
-def ejecutar_ssd(datos_excel=None, pagina=None, headless=False):
-    """
-    Punto de entrada para ejecutar la automatización del Sistema SSD.
-    Puede ejecutarse independientemente o reutilizando una página de Playwright existente.
-    """
-    if datos_excel is None:
-        datos_excel = cargar_datos_automatizacion()
-
-    usuario, clave = cargar_credenciales(sistema="ssd")
-
-    if pagina is not None:
-        return procesar_ssd_en_pagina(pagina, datos_excel, usuario, clave)
-
-    try:
-        with sync_playwright() as p:
-            navegador = p.firefox.launch(headless=headless)
-            contexto = navegador.new_context()
-            pagina = contexto.new_page()
-            procesar_ssd_en_pagina(pagina, datos_excel, usuario, clave)
-            navegador.close()
-    except Exception as e:
-        guardar_progreso(0, len(datos_excel), f"Error SSD: {str(e)}", "error")
-        raise e
-
-if __name__ == "__main__":
-    ejecutar_ssd()

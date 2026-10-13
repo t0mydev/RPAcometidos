@@ -13,9 +13,18 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Raíz del proyecto
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+# Carga variables de entorno desde .env
+load_dotenv(BASE_DIR / ".env")
+
+# MODO DE SIMULACIÓN / DEMO PARA VIDEOS Y PRESENTACIONES
+# True = Ejecuta el simulador (sin navegadores reales)
+# False = Ejecuta el orquestador real con Playwright
+MODO_SIMULACION = os.getenv("MODO_SIMULACION", "true").lower() in ("true", "1", "yes")
 
 # Unifica ambas rutas hacia la carpeta static, ahora mismo inutil ya que flask actúa como api y no como servidor web, pero lo dejamos porque a futuro si servirá los archivos estáticos de Vue
 app = Flask(__name__, template_folder="vue", static_folder="vue")
@@ -154,8 +163,11 @@ def empezar_automatizacion():
         with open(path_datos, "w", encoding="utf-8") as f:
             json.dump(datos_robot, f, ensure_ascii=False, indent=4)
             
-        # Ejecuta el orquestador de robots en segundo plano
-        subprocess.Popen([sys.executable, "-m", "rpacometidos.robots.orquestador"], cwd=str(BASE_DIR))
+        # Ejecuta el simulador o el orquestador según MODO_SIMULACION
+        if MODO_SIMULACION:
+            subprocess.Popen([sys.executable, "-m", "rpacometidos.robots.simulador"], cwd=str(BASE_DIR))
+        else:
+            subprocess.Popen([sys.executable, "-m", "rpacometidos.robots.orquestador"], cwd=str(BASE_DIR))
         
         return jsonify({"status": "iniciado", "mensaje": "La automatización se ha iniciado correctamente."}), 200
         

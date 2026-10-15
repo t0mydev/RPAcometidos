@@ -34,8 +34,12 @@ def guardar_progreso(paso, total, nombre, estado, detalle="", archivo="progreso_
         if detalle and (not historial or historial[-1] != detalle):
             historial.append(detalle)
 
+        # Índice en base 0 del bucle
+        indice = max(0, paso - 1)
+
         with open(path_progreso, "w", encoding="utf-8") as f:
             json.dump({
+                "indice": indice,
                 "paso": paso,
                 "total": total,
                 "nombre": nombre,

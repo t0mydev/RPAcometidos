@@ -42,8 +42,10 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=400):
             login_cometidos(pagina_cometidos, usuario_cometidos, clave_cometidos)
             login_firmador(pagina_firmador, usuario_firmador, clave_firmador)
 
+            fila_actual = 0
             # 4. Procesa cometido por cometido de forma secuencial
             for fila, registro in enumerate(datos_excel, start=1):
+                fila_actual = fila
                 limpiar_pdfs_temporales()  # Limpia PDFs temporales antes de procesar cada registro
                 # Paso A: SSD (obtiene número de proceso)
                 numero_ssd = procesar_un_ssd(pagina_ssd, registro, fila, total_registros)
@@ -62,7 +64,7 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=400):
             navegador.close()
 
     except Exception as e:
-        guardar_progreso(0, total_registros, str(e), "error")
+        guardar_progreso(fila_actual, total_registros, str(e), "error")
         raise e
     finally:
         # Se comenta temporalmente la limpieza para permitir pruebas con PDFs en temp_pdfs

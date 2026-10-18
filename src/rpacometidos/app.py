@@ -185,7 +185,13 @@ def progreso_automatizacion():
         except Exception as e:
             return jsonify({"error": str(e)}), 500
     else:
-        return jsonify({"estado": "no_iniciado", "indice": 0}), 200
+        return jsonify({
+            "estado": "no_iniciado",
+            "paso_stepper": 1,
+            "total_cometidos": 0,
+            "detalle": "",
+            "estados_cometidos": []
+        }), 200
 
 # ==============================================================
 # Endpoints de Credenciales

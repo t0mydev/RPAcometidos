@@ -41,7 +41,11 @@ async function agregarLog(msg) {
 }
 
 // ─── Actualizar Sub-Paso según el texto del log ───────────────
-function actualizarSubPasoPorDetalle(detalle) {
+function actualizarSubPasoPorDetalle(detalle, pasoStepper) {
+  if (pasoStepper) {
+    pasoActual.value = pasoStepper
+    return
+  }
   if (!detalle) return
   const txt = String(detalle).toLowerCase()
   if (txt.includes('ssd')) {
@@ -81,7 +85,7 @@ function comenzarMonitoreoProgreso() {
         if (data.detalle && ultimoMensajeRegistrado.value !== data.detalle) {
           ultimoMensajeRegistrado.value = data.detalle
           await agregarLog(data.detalle)
-          actualizarSubPasoPorDetalle(data.detalle)
+          actualizarSubPasoPorDetalle(data.detalle, data.paso_stepper)
         }
       } else if (data.estado === 'completado') {
         await agregarLog('¡Automatización finalizada exitosamente!')

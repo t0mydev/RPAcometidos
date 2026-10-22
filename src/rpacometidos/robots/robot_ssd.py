@@ -5,6 +5,11 @@ from rpacometidos.robots.base import (
     guardar_progreso,
     BASE_DIR
 )
+from rpacometidos.robots.resiliencia import (
+    ContextoRobot,
+    AccionError
+)
+from rpacometidos.procesador_datos import normalizar_rut
 
 MESES = {
     1: "ENERO", 2: "FEBRERO", 3: "MARZO", 4: "ABRIL",
@@ -13,15 +18,16 @@ MESES = {
 }
 
 def obtener_nombre_funcionario(rut):
-    """Busca el nombre del funcionario en datos_conocidos.csv por RUT."""
+    """Busca el nombre del funcionario en datos_conocidos.csv por RUT normalizado."""
     path_csv = BASE_DIR / 'datos_conocidos.csv'
-    rut_str = str(rut).strip()
-    if path_csv.exists():
-        with open(path_csv, mode='r', encoding='utf-8') as f:
-            lector = csv.DictReader(f)
-            for fila in lector:
-                if str(fila.get('rut', '')).strip() == rut_str:
-                    return str(fila.get('nombre', '')).strip()
+    rut_norm = normalizar_rut(rut)
+    if not rut_norm or not path_csv.exists():
+        return ""
+    with open(path_csv, mode='r', encoding='utf-8') as f:
+        lector = csv.DictReader(f)
+        for fila in lector:
+            if normalizar_rut(fila.get('rut', '')) == rut_norm:
+                return str(fila.get('nombre', '')).strip()
     return ""
 
 def generar_texto_cometido_ssd(registro):
@@ -55,21 +61,59 @@ def generar_texto_cometido_ssd(registro):
     # Arma el texto final
     return f"COMETIDO DE SERVICIO {nombre} {dia_ini_num} AL {dia_ter_num} {nombre_mes} {anio}".strip()
 
+def _seleccionar_en_popup_ssd(pagina, input_locator, valor, nombre_campo, ctx):
+    """
+    Llena un campo (Remitente, Destinatario, Dirigido a), abre el popup con Enter,
+    selecciona servicio 'DV', región '5' y confirma la selección en el popup.
+    """
+    ctx.escribir(input_locator, valor, f"Ingresando {nombre_campo} en SSD")
+    ctx.registrar(f"Abriendo popup de búsqueda de {nombre_campo}")
+    try:
+        with pagina.expect_popup(timeout=8000) as popup_info:
+            input_locator.press("Enter")
+    except Exception:
+        time.sleep(0.5)
+        try:
+            with pagina.expect_popup(timeout=8000) as popup_info:
+                input_locator.press("Enter")
+        except Exception as e:
+            raise AccionError(
+                portal=ctx.portal,
+                paso_stepper=ctx.paso_stepper,
+                accion=f"Abriendo popup de búsqueda de {nombre_campo}",
+                mensaje=f"No se abrió el popup de búsqueda para '{nombre_campo}' al presionar Enter: {str(e)}",
+                selector=str(input_locator)
+            )
+
+    popup = popup_info.value
+    popup.wait_for_load_state('domcontentloaded')
+    ctx.seleccionar(popup.locator('[name="cboServicio"]'), 'DV', f"Seleccionando servicio en popup de {nombre_campo}")
+    popup.wait_for_load_state('networkidle')
+    ctx.seleccionar(popup.locator('[name="cboRegion"]'), '5', f"Seleccionando región en popup de {nombre_campo}")
+    popup.wait_for_load_state('networkidle')
+    ctx.hacer_clic(popup.get_by_title("Click para Seleccionar"), f"Confirmando selección de {nombre_campo} en popup")
+
 def login_ssd(pagina, usuario, clave):
     """
-    Inicia sesión en el Sistema SSD.
+    Inicia sesión en el Sistema SSD de forma resiliente.
     """
     url_login_ssd = "http://ssd.mop.gov.cl/"
-    guardar_progreso(0, 0, "Inicio de sesión SSD", "iniciando", detalle="Iniciando sesión en Sistema SSD")
+    ctx = ContextoRobot(pagina, "ssd", 2, fila=0, total=0, rut="Inicio de sesión")
+    guardar_progreso(
+        0, 0, "Inicio de sesión SSD", "iniciando",
+        detalle="Iniciando sesión en Sistema SSD",
+        portal="ssd", paso_stepper=2, accion_actual="Iniciando sesión en SSD"
+    )
     pagina.goto(url_login_ssd)
-    pagina.locator('[name="txtUsuario"]').fill(usuario)
-    pagina.locator('[name="txtPass"]').fill(clave)
-    pagina.locator('[name="BtnEnviarRut"]').click()
+    ctx.escribir(pagina.locator('[name="txtUsuario"]'), usuario, "Ingresando usuario SSD", sensible=False)
+    ctx.escribir(pagina.locator('[name="txtPass"]'), clave, "Ingresando contraseña SSD", sensible=True)
+    ctx.hacer_clic(pagina.locator('[name="BtnEnviarRut"]'), "Enviando credenciales SSD")
     pagina.wait_for_load_state('networkidle')
 
 def procesar_un_ssd(pagina, registro, fila=1, total_registros=1):
     """
     Procesa un único cometido en la pestaña de SSD y retorna el número de proceso generado.
+    Cada acción cuenta con reintentos defensivos y trazabilidad de micro-paso.
     """
     numero_capturado = {}
 
@@ -81,74 +125,76 @@ def procesar_un_ssd(pagina, registro, fila=1, total_registros=1):
         dialog.accept()
 
     rut_raw = str(registro.get('rut', '')).strip()
+    ctx = ContextoRobot(pagina, "ssd", 2, fila=fila, total=total_registros, rut=rut_raw)
 
     frm_main = pagina.frame_locator('frame[name="frmMain"]')
     frm_menu = pagina.frame_locator('frame[name="frmMenu"]')
 
     # Solo abre "Despachar Documentos" si el formulario no está ya abierto en pantalla (ej: fila 1)
     if not frm_main.locator('[name="TxtOriginado_Des"]').is_visible():
-        guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle="Abriendo formulario de despacho documentos en SSD")
         frm_menu.locator('#divoCMenu0_0').hover()
         time.sleep(0.5)
-        frm_main.get_by_alt_text("Despachar Documentos", exact=False).first.click(force=True)
+        ctx.hacer_clic(
+            frm_main.get_by_alt_text("Despachar Documentos", exact=False).first,
+            "Abriendo formulario de despacho documentos en SSD",
+            force=True
+        )
         pagina.wait_for_load_state('networkidle')
 
-    guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle="Configurando remitente y destinatario en SSD")
-    frm_main.locator('[name="TxtOriginado_Des"]').fill("HUMANO")
-    # Espera a que se abra la ventana emergente al presionar Enter
-    with pagina.expect_popup() as popup_info1:
-        frm_main.locator('[name="TxtOriginado_Des"]').press("Enter")
+    # 1. Remitente (HUMANO)
+    _seleccionar_en_popup_ssd(pagina, frm_main.locator('[name="TxtOriginado_Des"]'), "HUMANO", "remitente", ctx)
 
-    popup1 = popup_info1.value
-    popup1.wait_for_load_state('domcontentloaded')
-    popup1.locator('[name="cboServicio"]').select_option('DV')
-    popup1.wait_for_load_state('networkidle')
-    popup1.locator('[name="cboRegion"]').select_option('5')
-    popup1.wait_for_load_state('networkidle')
-    popup1.get_by_title("Click para Seleccionar").click()
+    # 2. Destinatario (PARTES DRV)
+    _seleccionar_en_popup_ssd(pagina, frm_main.locator('[name="TxtDestinatario_Des"]'), "PARTES DRV", "destinatario", ctx)
 
-    frm_main.locator('[name="TxtDestinatario_Des"]').fill("PARTES DRV")
-    with pagina.expect_popup() as popup_info2:
-        frm_main.locator('[name="TxtDestinatario_Des"]').press("Enter")
+    # 3. Tipo Documento (57)
+    ctx.seleccionar(
+        frm_main.locator('[name="Cbo_TipoDocto"]'), '57',
+        "Seleccionando tipo de documento en SSD"
+    )
 
-    popup2 = popup_info2.value
-    popup2.wait_for_load_state('domcontentloaded')
-    popup2.locator('[name="cboServicio"]').select_option('DV')
-    popup2.wait_for_load_state('networkidle')
-    popup2.locator('[name="cboRegion"]').select_option('5')
-    popup2.wait_for_load_state('networkidle')
-    popup2.get_by_title("Click para Seleccionar").click()
-
-    frm_main.locator('[name="Cbo_TipoDocto"]').select_option('57')
-
-    # Genera el texto del cometido
-    guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle="Generando texto y rellenando materia en SSD")
+    # 4. Materia / Descripción
     texto_materia = generar_texto_cometido_ssd(registro)
-    time.sleep(0.5)
-    frm_main.locator('[name="TxtDescripcion"]').fill(texto_materia)
+    time.sleep(0.3)
+    ctx.escribir(
+        frm_main.locator('[name="TxtDescripcion"]'), texto_materia,
+        "Ingresando materia del documento en SSD"
+    )
 
-    frm_main.locator('[name="TxtDirigido_Des"]').fill("PARTES DRV")
-    with pagina.expect_popup() as popup_info3:
-        frm_main.locator('[name="TxtDirigido_Des"]').press("Enter")
+    # 5. Dirigido a (PARTES DRV)
+    _seleccionar_en_popup_ssd(pagina, frm_main.locator('[name="TxtDirigido_Des"]'), "PARTES DRV", "dirigido a", ctx)
 
-    popup3 = popup_info3.value
-    popup3.wait_for_load_state('domcontentloaded')
-    popup3.locator('[name="cboServicio"]').select_option('DV')
-    popup3.wait_for_load_state('networkidle')
-    popup3.locator('[name="cboRegion"]').select_option('5')
-    popup3.wait_for_load_state('networkidle')
-    popup3.get_by_title("Click para Seleccionar").click()
-
-    # Guarda el documento y captura la alerta nativa con el número de proceso
+    # 6. Grabar documento y capturar número de proceso
     numero_capturado.clear()
     pagina.once("dialog", manejar_dialogo_ssd)
 
-    frm_main.locator('[name="Grabar"]').click()
+    ctx.hacer_clic(
+        frm_main.locator('[name="Grabar"]'),
+        "Grabando documento en SSD"
+    )
     pagina.wait_for_load_state('networkidle')
 
     numero_proceso = numero_capturado.get('numero', '')
+    if not numero_proceso:
+        raise AccionError(
+            portal="ssd",
+            paso_stepper=2,
+            accion="Captura N° SSD",
+            mensaje="No se capturó la alerta nativa con el número de proceso tras hacer clic en Grabar en SSD",
+            selector='[name="Grabar"]'
+        )
+
     registro['numero_ssd'] = numero_proceso
-    guardar_progreso(fila, total_registros, rut_raw, "ejecutando", detalle=f"N° SSD generado: {numero_proceso}")
+    guardar_progreso(
+        paso=fila,
+        total=total_registros,
+        nombre=rut_raw,
+        estado="ejecutando",
+        detalle=f"N° SSD generado: {numero_proceso}",
+        portal="ssd",
+        paso_stepper=2,
+        accion_actual=f"N° SSD generado: {numero_proceso}"
+    )
 
     time.sleep(1)
     return numero_proceso

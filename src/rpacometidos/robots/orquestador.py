@@ -7,6 +7,7 @@ from rpacometidos.robots.base import (
     cargar_credenciales,
     limpiar_pdfs_temporales
 )
+from rpacometidos.robots.resiliencia import AccionError, recuperar_entorno_limpio
 from rpacometidos.robots.robot_ssd import login_ssd, procesar_un_ssd
 from rpacometidos.robots.robot_cometidos import login_cometidos, procesar_un_cometido
 from rpacometidos.robots.robot_firmador import login_firmador, procesar_un_firmador
@@ -16,6 +17,7 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=400):
     Orquestador principal: abre UNA SOLA ventana de navegador y ejecuta
     los robots en pestañas separadas compartiendo el mismo contexto,
     procesando cometido por cometido de forma secuencial (SSD -> Cometido -> Firmador).
+    Tolerante a fallos: si un cometido falla, se registra el error exacto y se continúa con el siguiente.
     """
     if datos_excel is None:
         datos_excel = cargar_datos_automatizacion()
@@ -26,6 +28,11 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=400):
     total_registros = len(datos_excel)
 
     try:
+        guardar_progreso(
+            0, total_registros, "Inicio", "iniciando",
+            detalle="Iniciando entorno de automatización...",
+            portal="inicio", paso_stepper=1, accion_actual="Iniciando entorno de automatización"
+        )
         limpiar_pdfs_temporales()  # Limpia PDFs temporales antes de iniciar la automatización
         with sync_playwright() as p:
             # 1. Abre UNA SOLA instancia de navegador
@@ -42,29 +49,90 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=400):
             login_cometidos(pagina_cometidos, usuario_cometidos, clave_cometidos)
             login_firmador(pagina_firmador, usuario_firmador, clave_firmador)
 
-            fila_actual = 0
             # 4. Procesa cometido por cometido de forma secuencial
             for fila, registro in enumerate(datos_excel, start=1):
-                fila_actual = fila
+                rut_raw = str(registro.get('rut', '')).strip()
                 limpiar_pdfs_temporales()  # Limpia PDFs temporales antes de procesar cada registro
-                # Paso A: SSD (obtiene número de proceso)
-                numero_ssd = procesar_un_ssd(pagina_ssd, registro, fila, total_registros)
-                registro['numero_ssd'] = numero_ssd
-                guardar_datos_automatizacion(datos_excel)
 
-                # Paso B: Cometidos (obtiene PDF descargado)
-                ruta_pdf = procesar_un_cometido(pagina_cometidos, registro, fila, total_registros)
-                registro['ruta_pdf'] = str(ruta_pdf)
-                guardar_datos_automatizacion(datos_excel)
+                try:
+                    # Paso A: SSD (obtiene número de proceso)
+                    numero_ssd = procesar_un_ssd(pagina_ssd, registro, fila, total_registros)
+                    registro['numero_ssd'] = numero_ssd
+                    guardar_datos_automatizacion(datos_excel)
 
-                # Paso C: Firmador (crea el flujo en firmador con el número SSD y PDF)
-                procesar_un_firmador(pagina_firmador, registro, fila, total_registros)
+                    # Paso B: Cometidos (obtiene PDF descargado)
+                    ruta_pdf = procesar_un_cometido(pagina_cometidos, registro, fila, total_registros)
+                    registro['ruta_pdf'] = str(ruta_pdf)
+                    guardar_datos_automatizacion(datos_excel)
 
-            guardar_progreso(total_registros, total_registros, "Automatización", "completado", detalle="Todos los cometidos fueron procesados exitosamente")
+                    # Paso C: Firmador (crea el flujo en firmador con el número SSD y PDF)
+                    procesar_un_firmador(pagina_firmador, registro, fila, total_registros)
+
+                    registro['estado_proceso'] = 'completado'
+                    guardar_datos_automatizacion(datos_excel)
+
+                except AccionError as e:
+                    # Registra el fallo de este cometido específico sin detener la automatización
+                    error_info = e.a_dict()
+                    registro['estado_proceso'] = 'fallido'
+                    registro['error'] = error_info
+                    guardar_datos_automatizacion(datos_excel)
+
+                    guardar_progreso(
+                        paso=fila,
+                        total=total_registros,
+                        nombre=rut_raw,
+                        estado="ejecutando",
+                        detalle=f"Fallo en {e.portal.upper()} ({e.accion}): {e.mensaje}",
+                        portal=e.portal,
+                        paso_stepper=e.paso_stepper,
+                        accion_actual=e.accion,
+                        ultimo_error=error_info
+                    )
+
+                    # Limpia popups y estados de formularios para el siguiente cometido
+                    recuperar_entorno_limpio(pagina_ssd, pagina_cometidos, pagina_firmador)
+                    continue
+
+                except Exception as e:
+                    # Captura cualquier error imprevisto
+                    error_info = {
+                        "portal": "general",
+                        "paso_stepper": 0,
+                        "accion": "Error inesperado",
+                        "mensaje": str(e),
+                        "selector": ""
+                    }
+                    registro['estado_proceso'] = 'fallido'
+                    registro['error'] = error_info
+                    guardar_datos_automatizacion(datos_excel)
+
+                    guardar_progreso(
+                        paso=fila,
+                        total=total_registros,
+                        nombre=rut_raw,
+                        estado="ejecutando",
+                        detalle=f"Error inesperado en cometido {fila}: {str(e)}",
+                        ultimo_error=error_info
+                    )
+
+                    recuperar_entorno_limpio(pagina_ssd, pagina_cometidos, pagina_firmador)
+                    continue
+
+            guardar_progreso(
+                paso=total_registros,
+                total=total_registros,
+                nombre="Automatización",
+                estado="completado",
+                detalle="Todos los cometidos fueron procesados",
+                portal="fin",
+                paso_stepper=5,
+                accion_actual="Fin de automatización"
+            )
             navegador.close()
 
     except Exception as e:
-        guardar_progreso(fila_actual, total_registros, str(e), "error")
+        guardar_progreso(0, total_registros, str(e), "error", detalle=f"Error crítico global: {str(e)}")
         raise e
     finally:
         # Se comenta temporalmente la limpieza para permitir pruebas con PDFs en temp_pdfs

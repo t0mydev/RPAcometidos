@@ -8,6 +8,7 @@ from rpacometidos.robots.base import (
     guardar_progreso,
     cargar_datos_automatizacion,
     guardar_datos_automatizacion,
+    cargar_credenciales,
     obtener_ruta_pdf_temporal,
     BASE_DIR
 )
@@ -106,6 +107,11 @@ def ejecutar_simulacion(datos_excel=None, delay=None):
     )
     time.sleep(delay)
 
+    # Obtiene el usuario desde memoria RAM (o usa 'admin' por defecto en modo demo)
+    usuario_sim, _ = cargar_credenciales()
+    if not usuario_sim:
+        usuario_sim = "admin"
+
     # Login SSD
     guardar_progreso(
         paso=0, total=total_registros, nombre="Inicio de sesión SSD", estado="iniciando",
@@ -115,7 +121,7 @@ def ejecutar_simulacion(datos_excel=None, delay=None):
     time.sleep(delay)
     guardar_progreso(
         paso=0, total=total_registros, nombre="Inicio de sesión SSD", estado="iniciando",
-        detalle="Ingresando usuario SSD: admin",
+        detalle=f"Ingresando usuario SSD: {usuario_sim}",
         portal="ssd", paso_stepper=2, accion_actual="Ingresando usuario SSD"
     )
     time.sleep(delay)
@@ -141,7 +147,7 @@ def ejecutar_simulacion(datos_excel=None, delay=None):
     time.sleep(delay)
     guardar_progreso(
         paso=0, total=total_registros, nombre="Inicio de sesión Personal", estado="iniciando",
-        detalle="Ingresando usuario Personal: admin",
+        detalle=f"Ingresando usuario Personal: {usuario_sim}",
         portal="personal", paso_stepper=2, accion_actual="Ingresando usuario Personal"
     )
     time.sleep(delay)
@@ -167,7 +173,7 @@ def ejecutar_simulacion(datos_excel=None, delay=None):
     time.sleep(delay)
     guardar_progreso(
         paso=0, total=total_registros, nombre="Inicio de sesión Firmador", estado="iniciando",
-        detalle="Ingresando usuario Firmador: admin",
+        detalle=f"Ingresando usuario Firmador: {usuario_sim}",
         portal="firmador", paso_stepper=2, accion_actual="Ingresando usuario Firmador"
     )
     time.sleep(delay)

@@ -715,8 +715,17 @@ async function iniciarEjecucion() {
     const resp = await fetch('/api/empezar-automatizacion', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        filas: payload,
+        credenciales: {
+          usuario: credencialUsuario.value.trim(),
+          clave: credencialClave.value,
+        },
+      }),
     })
+
+    // Limpia la contraseña en el navegador tras enviarla al backend
+    credencialClave.value = ''
 
     if (!resp.ok) throw new Error(`El servidor respondió con estado ${resp.status}`)
 
@@ -1068,7 +1077,31 @@ async function descargarExcelCorregido() {
   }
 }
 
+// ─── Modal de Credenciales ────────────────────────────────────
+const mostrarModalCredenciales = ref(false)
+const credencialUsuario        = ref('')
+const credencialClave          = ref('')
+const mostrarClave             = ref(false)
+const errorCredenciales        = ref('')
+
 function empezarAutomatizacion() {
+  errorCredenciales.value = ''
+  mostrarClave.value = false
+  mostrarModalCredenciales.value = true
+}
+
+function cerrarModalCredenciales() {
+  mostrarModalCredenciales.value = false
+  errorCredenciales.value = ''
+  credencialClave.value = ''
+}
+
+function confirmarCredencialesEIniciar() {
+  if (!credencialUsuario.value.trim() || !credencialClave.value) {
+    errorCredenciales.value = 'Debes ingresar tu usuario y contraseña institucional.'
+    return
+  }
+  mostrarModalCredenciales.value = false
   etapaActual.value = 2
   iniciarEjecucion()
 }
@@ -1665,6 +1698,101 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
       :fileName="fileName"
       @volver-inicio="volverAlInicio"
     />
+
+    <!-- ══════════════════════════════════════════════════════ -->
+    <!-- MODAL DE CREDENCIALES                                  -->
+    <!-- ══════════════════════════════════════════════════════ -->
+    <div
+      v-if="mostrarModalCredenciales"
+      class="modal-credenciales-backdrop"
+      @click.self="cerrarModalCredenciales"
+    >
+      <div class="modal-credenciales-card">
+        <div class="modal-credenciales-header">
+          <div class="d-flex align-items-center gap-2">
+            <div class="modal-credenciales-icono">
+              <i class="bi bi-shield-lock-fill"></i>
+            </div>
+            <div>
+              <h5 class="modal-credenciales-titulo mb-0">Credenciales Institucionales MOP</h5>
+              <span class="modal-credenciales-subtitulo">Acceso único para SSD, Portal Personal y Firmador</span>
+            </div>
+          </div>
+          <button type="button" class="btn-cerrar-modal" @click="cerrarModalCredenciales">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+
+        <form @submit.prevent="confirmarCredencialesEIniciar" class="modal-credenciales-body">
+          <div class="modal-credenciales-aviso">
+            <i class="bi bi-info-circle-fill me-2"></i>
+            <span>
+              Por seguridad, tus credenciales <strong>no se guardan en ningún archivo</strong> y se utilizan únicamente en memoria durante esta ejecución.
+            </span>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label modal-credenciales-label">Usuario</label>
+            <div class="input-group">
+              <span class="input-group-text modal-input-addon">
+                <i class="bi bi-person-fill"></i>
+              </span>
+              <input
+                v-model="credencialUsuario"
+                type="text"
+                class="form-control modal-input"
+                placeholder="Ingresa tu usuario institucional"
+                autocomplete="username"
+                autofocus
+              />
+            </div>
+          </div>
+
+          <div class="mb-2">
+            <label class="form-label modal-credenciales-label">Contraseña</label>
+            <div class="input-group">
+              <span class="input-group-text modal-input-addon">
+                <i class="bi bi-key-fill"></i>
+              </span>
+              <input
+                v-model="credencialClave"
+                :type="mostrarClave ? 'text' : 'password'"
+                class="form-control modal-input"
+                placeholder="Ingresa tu contraseña"
+                autocomplete="current-password"
+              />
+              <button
+                type="button"
+                class="btn btn-outline-secondary modal-btn-ojo"
+                @click="mostrarClave = !mostrarClave"
+                tabindex="-1"
+              >
+                <i :class="mostrarClave ? 'bi bi-eye-slash-fill' : 'bi bi-eye-fill'"></i>
+              </button>
+            </div>
+          </div>
+
+          <div v-if="errorCredenciales" class="modal-credenciales-error mt-2">
+            <i class="bi bi-exclamation-circle-fill me-1"></i>
+            {{ errorCredenciales }}
+          </div>
+
+          <div class="modal-credenciales-footer mt-4">
+            <button
+              type="button"
+              class="btn btn-outline-secondary btn-modal-cancelar"
+              @click="cerrarModalCredenciales"
+            >
+              Cancelar
+            </button>
+            <button type="submit" class="btn btn-primary btn-modal-confirmar">
+              <i class="bi bi-play-circle-fill me-2"></i>
+              Confirmar e Iniciar ({{ filas.length }})
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
 
   </div>
 </template>
@@ -3083,5 +3211,163 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
   .etapa-layout     { flex-direction: column; overflow: auto; }
   .panel-checklist  { width: 100%; border-right: none; border-bottom: 1px solid var(--color-neutral); padding: 20px; }
   .sub-stepper-compact { flex-wrap: wrap; }
+}
+
+/* ══════════════════════════════════════════════════════════════ */
+/* MODAL DE CREDENCIALES                                          */
+/* ══════════════════════════════════════════════════════════════ */
+.modal-credenciales-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(4px);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: fadeInModal 0.18s ease-out;
+}
+
+@keyframes fadeInModal {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.modal-credenciales-card {
+  width: 100%;
+  max-width: 460px;
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.35);
+  border: 1px solid #e2e8f0;
+  overflow: hidden;
+}
+
+.modal-credenciales-header {
+  background-color: var(--color-tertiary, #0f172a);
+  color: #ffffff;
+  padding: 18px 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modal-credenciales-icono {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: rgba(56, 189, 248, 0.18);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  color: #38bdf8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+  flex-shrink: 0;
+}
+
+.modal-credenciales-titulo {
+  font-size: 16px;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.modal-credenciales-subtitulo {
+  font-size: 12px;
+  color: #94a3b8;
+  display: block;
+}
+
+.btn-cerrar-modal {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: all 0.15s;
+}
+
+.btn-cerrar-modal:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.modal-credenciales-body {
+  padding: 22px 24px 24px;
+}
+
+.modal-credenciales-aviso {
+  background-color: #f0f9ff;
+  border: 1px solid #bae6fd;
+  color: #0369a1;
+  font-size: 12.5px;
+  line-height: 1.45;
+  padding: 10px 13px;
+  border-radius: 10px;
+  margin-bottom: 18px;
+  display: flex;
+  align-items: flex-start;
+}
+
+.modal-credenciales-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  margin-bottom: 6px;
+}
+
+.modal-input-addon {
+  background-color: #f8fafc;
+  border-color: #cbd5e1;
+  color: #64748b;
+}
+
+.modal-input {
+  font-size: 14px;
+  border-color: #cbd5e1;
+  padding: 9px 12px;
+}
+
+.modal-input:focus {
+  border-color: #0284c7;
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15);
+}
+
+.modal-btn-ojo {
+  border-color: #cbd5e1;
+  color: #64748b;
+}
+
+.modal-credenciales-error {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #dc2626;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+
+.modal-credenciales-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.btn-modal-cancelar {
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 8px;
+}
+
+.btn-modal-confirmar {
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 8px 18px;
+  border-radius: 8px;
 }
 </style>

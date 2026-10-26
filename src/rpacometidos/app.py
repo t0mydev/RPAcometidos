@@ -139,8 +139,17 @@ def empezar_automatizacion():
             except Exception:
                 pass
 
-        # Recupera los registros corregidos desde la vista
-        datos = request.json or []
+        # Recupera los registros corregidos y las credenciales desde la vista
+        body = request.get_json() or []
+        if isinstance(body, dict):
+            datos = body.get("filas") or []
+            credenciales = body.get("credenciales") or {}
+        else:
+            datos = body
+            credenciales = {}
+
+        usuario_mop = str(credenciales.get("usuario") or "").strip()
+        clave_mop = str(credenciales.get("clave") or "")
         
         # Le damos formato a los datos para el robot de Playwright
         CAMPOS_SIMPLES = [
@@ -159,15 +168,22 @@ def empezar_automatizacion():
             dato["accion"] = "aprobado" if dato["rut"] and dato["sigla"] else "pendiente"
             datos_robot.append(dato)
             
-        # Guarda los registros en datos_automatizacion.json
+        # Guarda únicamente los registros en datos_automatizacion.json (sin credenciales en disco)
         with open(path_datos, "w", encoding="utf-8") as f:
             json.dump(datos_robot, f, ensure_ascii=False, indent=4)
+
+        # Inyecta las credenciales exclusivamente en la memoria RAM del subproceso hijo
+        env_proceso = os.environ.copy()
+        if usuario_mop:
+            env_proceso["RPA_USUARIO_MOP"] = usuario_mop
+        if clave_mop:
+            env_proceso["RPA_CLAVE_MOP"] = clave_mop
             
         # Ejecuta el simulador o el orquestador según MODO_SIMULACION
         if MODO_SIMULACION:
-            subprocess.Popen([sys.executable, "-m", "rpacometidos.robots.simulador"], cwd=str(BASE_DIR))
+            subprocess.Popen([sys.executable, "-m", "rpacometidos.robots.simulador"], cwd=str(BASE_DIR), env=env_proceso)
         else:
-            subprocess.Popen([sys.executable, "-m", "rpacometidos.robots.orquestador"], cwd=str(BASE_DIR))
+            subprocess.Popen([sys.executable, "-m", "rpacometidos.robots.orquestador"], cwd=str(BASE_DIR), env=env_proceso)
         
         return jsonify({"status": "iniciado", "mensaje": "La automatización se ha iniciado correctamente."}), 200
         

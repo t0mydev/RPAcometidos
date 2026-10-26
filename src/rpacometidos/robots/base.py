@@ -1,3 +1,4 @@
+import os
 import json
 from pathlib import Path
 
@@ -144,27 +145,13 @@ def guardar_datos_automatizacion(datos, archivo="datos_automatizacion.json"):
     except Exception:
         pass
 
-def cargar_credenciales(sistema=None, archivo="credenciales.json"):
+def cargar_credenciales():
     """
-    Carga usuario y contraseña del archivo de credenciales.
-    Permite filtrar por sistema ('cometidos' o 'ssd').
+    Obtiene usuario y contraseña desde las variables de entorno en memoria RAM
+    (RPA_USUARIO_MOP y RPA_CLAVE_MOP) para los 3 portales.
     """
-    path_credenciales = BASE_DIR / archivo
-    usuario = "no lee el archivo"
-    clave = "no lee el archivo"
-    if path_credenciales.exists():
-        try:
-            with open(path_credenciales, "r", encoding="utf-8") as f:
-                creds = json.load(f)
-                if sistema and sistema in creds and isinstance(creds[sistema], dict):
-                    seccion = creds[sistema]
-                    usuario = seccion.get("usuario", usuario)
-                    clave = seccion.get("clave", clave)
-                else:
-                    usuario = creds.get("usuario", usuario)
-                    clave = creds.get("clave", clave)
-        except Exception:
-            pass
+    usuario = os.environ.get("RPA_USUARIO_MOP", "").strip()
+    clave = os.environ.get("RPA_CLAVE_MOP", "")
     return usuario, clave
 
 def obtener_ruta_pdf_temporal(nombre_archivo):

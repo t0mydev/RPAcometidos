@@ -613,7 +613,15 @@ function comenzarMonitoreoProgreso() {
         pasoSubStepper.value = 5
         automatizando.value = false
         completadoExitoso.value = true
-        mensajeEstado.value = '¡Automatización finalizada con éxito!'
+        const compFinal = (data.estados_cometidos || []).filter(c => c.estado === 'completado').length
+        const fallFinal = (data.estados_cometidos || []).filter(c => c.estado === 'fallido').length
+        if (fallFinal === 0) {
+          mensajeEstado.value = '¡Automatización finalizada con éxito!'
+        } else if (compFinal > 0) {
+          mensajeEstado.value = `Automatización finalizada con observaciones (${compFinal} completado${compFinal !== 1 ? 's' : ''}, ${fallFinal} con error)`
+        } else {
+          mensajeEstado.value = `Automatización finalizada: los ${fallFinal} cometido(s) presentaron errores`
+        }
 
       } else if (data.estado === 'error') {
         const errDesc = data.detalle || 'Error desconocido'
@@ -1582,8 +1590,8 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
         <div v-if="etapaActual === 2" class="cta-zona cta-zona--ejecucion">
           <!-- Mensaje de estado al completar o fallar lote (ajustado al texto) -->
           <div v-if="completadoExitoso" class="cta-alerta-wrapper mb-2">
-            <span class="cta-exito">
-              <i class="bi bi-check-circle-fill me-2"></i>{{ mensajeEstado }}
+            <span :class="tieneErroresEnLogs ? 'cta-aviso' : 'cta-exito'">
+              <i :class="tieneErroresEnLogs ? 'bi bi-exclamation-triangle-fill me-2' : 'bi bi-check-circle-fill me-2'"></i>{{ mensajeEstado }}
             </span>
           </div>
           <div v-if="huboError" class="cta-alerta-wrapper mb-2">
@@ -1653,6 +1661,7 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
     <EtapaFinal
       v-if="etapaActual === 3"
       :filas="filas"
+      :estadosCometidos="estadosCometidos"
       :fileName="fileName"
       @volver-inicio="volverAlInicio"
     />

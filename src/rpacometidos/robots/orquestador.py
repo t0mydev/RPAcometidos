@@ -7,7 +7,11 @@ from rpacometidos.robots.base import (
     cargar_credenciales,
     limpiar_pdfs_temporales
 )
-from rpacometidos.robots.resiliencia import AccionError, recuperar_entorno_limpio
+from rpacometidos.robots.resiliencia import (
+    AccionError,
+    CredencialesInvalidasError,
+    recuperar_entorno_limpio
+)
 from rpacometidos.robots.robot_ssd import login_ssd, procesar_un_ssd
 from rpacometidos.robots.robot_cometidos import login_cometidos, procesar_un_cometido
 from rpacometidos.robots.robot_firmador import login_firmador, procesar_un_firmador
@@ -92,13 +96,13 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=400):
                     recuperar_entorno_limpio(pagina_ssd, pagina_cometidos, pagina_firmador)
                     continue
 
-                except Exception as e:
+                except Exception:
                     # Captura cualquier error imprevisto
                     error_info = {
                         "portal": "general",
                         "paso_stepper": 0,
-                        "accion": "Error inesperado",
-                        "mensaje": str(e),
+                        "accion": "Procesando cometido",
+                        "mensaje": "Ocurrió un error inesperado al procesar este cometido en el navegador.",
                         "selector": ""
                     }
                     registro['estado_proceso'] = 'fallido'
@@ -110,7 +114,7 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=400):
                         total=total_registros,
                         nombre=rut_raw,
                         estado="ejecutando",
-                        detalle=f"Error inesperado en cometido {fila}: {str(e)}",
+                        detalle=f"Error inesperado al procesar el cometido #{fila}",
                         ultimo_error=error_info
                     )
 
@@ -129,8 +133,25 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=400):
             )
             navegador.close()
 
+    except CredencialesInvalidasError as e:
+        guardar_progreso(
+            0, total_registros, "Credenciales inválidas", "error_credenciales",
+            detalle=e.mensaje,
+            portal=e.portal,
+            paso_stepper=2,
+            accion_actual="Credenciales rechazadas"
+        )
+    except AccionError as e:
+        guardar_progreso(
+            0, total_registros, "Error de inicio", "error",
+            detalle=f"No se pudo iniciar sesión en {e.portal.upper()} ({e.accion}): {e.mensaje}"
+        )
+        raise e
     except Exception as e:
-        guardar_progreso(0, total_registros, str(e), "error", detalle=f"Error crítico global: {str(e)}")
+        guardar_progreso(
+            0, total_registros, "Error de conexión", "error",
+            detalle="No se pudo conectar a los portales institucionales. Verifica tu conexión a la red MOP/VPN o las credenciales ingresadas."
+        )
         raise e
     finally:
         # Se comenta temporalmente la limpieza para permitir pruebas con PDFs en temp_pdfs

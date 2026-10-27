@@ -8,7 +8,8 @@ from rpacometidos.robots.base import (
 from rpacometidos.robots.resiliencia import (
     ContextoRobot,
     esperar_overlays,
-    AccionError
+    AccionError,
+    CredencialesInvalidasError
 )
 from rpacometidos.procesador_datos import normalizar_rut
 
@@ -29,6 +30,12 @@ def login_cometidos(pagina, usuario, clave):
     ctx.hacer_clic(pagina.locator('button[type="submit"]'), "Enviando credenciales Personal")
     pagina.wait_for_load_state('networkidle')
     esperar_overlays(pagina)
+    time.sleep(0.8)
+    if pagina.locator('#iduser').is_visible() or pagina.locator('#idpassword').is_visible():
+        raise CredencialesInvalidasError(
+            portal="personal",
+            mensaje="Usuario o contraseña incorrectos al iniciar sesión en el Portal Personal."
+        )
 
 def procesar_un_cometido(pagina, registro, fila=1, total_registros=1):
     """
@@ -161,11 +168,11 @@ def procesar_un_cometido(pagina, registro, fila=1, total_registros=1):
                 "Array.from(document.querySelectorAll('#btnSeleccionaConfiere')).filter(b => b.offsetParent !== null).length === 1",
                 timeout=8000
             )
-        except Exception as e:
+        except Exception:
             raise AccionError(
                 portal=portal, paso_stepper=paso_stepper,
                 accion="Buscando atribución",
-                mensaje=f"No apareció la opción para seleccionar la atribución '{atribucion_val}': {str(e)}",
+                mensaje=f"No apareció la opción para seleccionar la atribución '{atribucion_val}'.",
                 selector="#btnSeleccionaConfiere"
             )
 
@@ -247,11 +254,11 @@ def procesar_un_cometido(pagina, registro, fila=1, total_registros=1):
     try:
         modal.wait_for(state="visible", timeout=12000)
         ctx.hacer_clic(modal.locator('button', has_text="Cerrar"), "Cerrando confirmación de grabado", esperar_oculto=modal)
-    except Exception as e:
+    except Exception:
         raise AccionError(
             portal=portal, paso_stepper=paso_stepper,
             accion="Confirmación grabado",
-            mensaje=f"No apareció o no se pudo cerrar el mensaje de confirmación al grabar: {str(e)}",
+            mensaje="No apareció o no se pudo cerrar el mensaje de confirmación al grabar.",
             selector="#mensajeModal"
         )
 
@@ -265,11 +272,11 @@ def procesar_un_cometido(pagina, registro, fila=1, total_registros=1):
         descarga = download_info.value
         ruta_pdf = obtener_ruta_pdf_temporal(f"cometido_{rut_raw}.pdf")
         descarga.save_as(ruta_pdf)
-    except Exception as e:
+    except Exception:
         raise AccionError(
             portal=portal, paso_stepper=paso_stepper,
             accion="Descargar PDF",
-            mensaje=f"Error durante la descarga del PDF del cometido: {str(e)}",
+            mensaje="No se pudo descargar el PDF del cometido.",
             selector="#btnImprimirViatico"
         )
 

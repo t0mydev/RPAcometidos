@@ -108,7 +108,7 @@ def ejecutar_simulacion(datos_excel=None, delay=None):
     time.sleep(delay)
 
     # Obtiene el usuario desde memoria RAM (o usa 'admin' por defecto en modo demo)
-    usuario_sim, _ = cargar_credenciales()
+    usuario_sim, clave_sim = cargar_credenciales()
     if not usuario_sim:
         usuario_sim = "admin"
 
@@ -137,6 +137,14 @@ def ejecutar_simulacion(datos_excel=None, delay=None):
         portal="ssd", paso_stepper=2, accion_actual="Enviando credenciales SSD"
     )
     time.sleep(delay)
+
+    if clave_sim == "error":
+        guardar_progreso(
+            paso=0, total=total_registros, nombre="Credenciales inválidas", estado="error_credenciales",
+            detalle="Usuario o contraseña incorrectos al iniciar sesión en el Sistema SSD.",
+            portal="ssd", paso_stepper=2, accion_actual="Credenciales rechazadas"
+        )
+        return
 
     # Login Personal
     guardar_progreso(

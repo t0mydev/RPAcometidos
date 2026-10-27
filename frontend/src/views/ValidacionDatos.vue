@@ -186,20 +186,36 @@ const tieneErroresEnLogs = computed(() =>
   logsAutomatizacion.value.some(l => l.tipo === 'checkpoint_error')
 )
 
-// Inspeccionar error directamente desde la fila roja
-async function inspeccionarErrorFila(indice) {
-  mostrarTerminal.value = true
-  await nextTick()
-  const checkpointEl = document.getElementById(`log-checkpoint-${indice}`)
-  if (checkpointEl) {
-    checkpointEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    checkpointEl.classList.add('consola-card-error--resaltado')
-    setTimeout(() => {
-      checkpointEl.classList.remove('consola-card-error--resaltado')
-    }, 1800)
-  } else if (consolaCuerpoRef.value) {
-    consolaCuerpoRef.value.scrollTop = consolaCuerpoRef.value.scrollHeight
+// Modal de detalle de error al hacer clic en "Ver detalle" en la fila
+const detalleErrorModal = ref(null)
+
+function inspeccionarErrorFila(indice) {
+  const logErr = logsAutomatizacion.value.find(
+    l => l.tipo === 'checkpoint_error' && l.cometidoNum === indice + 1
+  )
+  if (logErr) {
+    detalleErrorModal.value = logErr
+    return
   }
+  const ec = estadosCometidos.value.find(c => c.indice === indice)
+  const mapaPortales = {
+    ssd: 'Portal SSD (Gestión Documental)',
+    personal: 'Portal Personal MOP (Viáticos)',
+    firmador: 'Portal Firmador MOP (Firmas)',
+    general: 'Sistema General',
+  }
+  const portalKey = ec?.ultimo_error?.portal || ec?.portal || ''
+  detalleErrorModal.value = {
+    cometidoNum: indice + 1,
+    rut: formatearRut(ec?.rut || filas.value[indice]?.rut),
+    portalNombre: mapaPortales[portalKey] || (portalKey ? String(portalKey).toUpperCase() : 'PORTAL INSTITUCIONAL'),
+    accion: ec?.ultimo_error?.accion || ec?.accion_actual || 'Ejecutando acción',
+    errorMensaje: ec?.ultimo_error?.mensaje || ec?.detalle || 'Error detectado en el proceso',
+  }
+}
+
+function cerrarModalError() {
+  detalleErrorModal.value = null
 }
 
 const totalErrores = computed(() =>
@@ -358,7 +374,11 @@ function copiarLogs() {
   if (logsAutomatizacion.value.length === 0) return
   const texto = logsAutomatizacion.value.map(l => {
     if (l.tipo === 'checkpoint_error') {
-      return `[${l.hora}] ❌ CHECKPOINT FALLO COMETIDO #${l.cometidoNum} (${l.portalNombre})\n  Funcionario: ${l.rut}\n  Acción: ${l.accion}\n  Causa: ${l.errorMensaje}\n  Selector: ${l.errorSelector || 'N/A'}\n  Python: ${l.errorPython}`
+      const titulo = l.cometidoNum > 0
+        ? `FALLO EN COMETIDO #${l.cometidoNum} (${l.portalNombre})`
+        : `NO SE PUDO INICIAR LA AUTOMATIZACIÓN`
+      const lineaFunc = l.rut && l.rut !== 'N/A' ? `\n  Funcionario: ${l.rut}` : ''
+      return `[${l.hora}] ❌ ${titulo}${lineaFunc}\n  Paso: ${l.accion}\n  Motivo: ${l.errorMensaje}`
     } else if (l.tipo === 'checkpoint_exito') {
       return `[${l.hora}] ✔ ${l.texto}`
     } else if (l.tipo === 'inicio_cometido') {
@@ -494,11 +514,6 @@ function comenzarMonitoreoProgreso() {
 
             const accion = err?.accion || c.accion_actual || 'Ejecutando acción'
             const mensaje = err?.mensaje || c.detalle || 'Error detectado en el proceso'
-            const selector = err?.selector || ''
-
-            const pythonOutput = err
-              ? `AccionError(portal="${err.portal}", paso_stepper=${err.paso_stepper}, accion="${accion}", mensaje="${mensaje}"${selector ? `, selector="${selector}"` : ''})`
-              : (c.detalle || `Error en cometido ${c.indice + 1}`)
 
             agregarLog({
               tipo: 'checkpoint_error',
@@ -507,8 +522,6 @@ function comenzarMonitoreoProgreso() {
               portalNombre,
               accion,
               errorMensaje: mensaje,
-              errorSelector: selector,
-              errorPython: pythonOutput,
               texto: `❌ FALLO EN COMETIDO #${c.indice + 1} (${portalNombre})`,
             })
           }
@@ -564,10 +577,6 @@ function comenzarMonitoreoProgreso() {
             const err = c.ultimo_error
             const accion = err?.accion || c.accion_actual || 'Ejecutando acción'
             const mensaje = err?.mensaje || c.detalle || 'Error detectado en el proceso'
-            const selector = err?.selector || ''
-            const pythonOutput = err
-              ? `AccionError(portal="${err.portal}", paso_stepper=${err.paso_stepper}, accion="${accion}", mensaje="${mensaje}"${selector ? `, selector="${selector}"` : ''})`
-              : (c.detalle || `Error en cometido ${c.indice + 1}`)
 
             agregarLog({
               tipo: 'checkpoint_error',
@@ -576,8 +585,6 @@ function comenzarMonitoreoProgreso() {
               portalNombre,
               accion,
               errorMensaje: mensaje,
-              errorSelector: selector,
-              errorPython: pythonOutput,
               texto: `❌ FALLO EN COMETIDO #${c.indice + 1} (${portalNombre})`,
             })
           } else if (c.estado === 'completado' && !cometidosCompletadosLogueados.has(c.indice)) {
@@ -623,23 +630,40 @@ function comenzarMonitoreoProgreso() {
           mensajeEstado.value = `Automatización finalizada: los ${fallFinal} cometido(s) presentaron errores`
         }
 
-      } else if (data.estado === 'error') {
-        const errDesc = data.detalle || 'Error desconocido'
+      } else if (data.estado === 'error_credenciales') {
+        const errDesc = data.detalle || 'Usuario o contraseña incorrectos. Verifica tus credenciales e intenta nuevamente.'
         agregarLog({
           tipo: 'checkpoint_error',
           cometidoNum: 0,
           rut: 'N/A',
-          portalNombre: 'Motor RPA (Excepción Global)',
-          accion: 'Inicialización de Navegador / Sesión',
+          portalNombre: 'Inicio de Sesión MOP',
+          accion: 'Verificación de credenciales',
           errorMensaje: errDesc,
-          errorSelector: '',
-          errorPython: `RuntimeError: ${errDesc}`,
-          texto: `Error global en el proceso: ${errDesc}`,
+          texto: errDesc,
         })
         detenerMonitoreoProgreso()
         automatizando.value = false
         huboError.value = true
-        mensajeEstado.value = `Error en el proceso: ${errDesc}`
+        mensajeEstado.value = errDesc
+        errorCredenciales.value = errDesc
+        mostrarClave.value = false
+        mostrarModalCredenciales.value = true
+
+      } else if (data.estado === 'error') {
+        const errDesc = data.detalle || 'No se pudo completar el inicio del proceso.'
+        agregarLog({
+          tipo: 'checkpoint_error',
+          cometidoNum: 0,
+          rut: 'N/A',
+          portalNombre: 'Inicio de Automatización',
+          accion: 'Conexión / Inicio de sesión en portales MOP',
+          errorMensaje: errDesc,
+          texto: errDesc,
+        })
+        detenerMonitoreoProgreso()
+        automatizando.value = false
+        huboError.value = true
+        mensajeEstado.value = errDesc
       }
     } catch (e) {
       console.error('Error al consultar progreso:', e)
@@ -738,11 +762,9 @@ async function iniciarEjecucion() {
         tipo: 'checkpoint_error',
         cometidoNum: 0,
         rut: 'N/A',
-        portalNombre: 'API Server',
-        accion: 'POST /api/empezar-automatizacion',
+        portalNombre: 'Servidor Local',
+        accion: 'Iniciar automatización',
         errorMensaje: data.mensaje || 'Respuesta negativa del servidor',
-        errorSelector: '',
-        errorPython: `ServerRejected: ${data.mensaje}`,
         texto: `Error al iniciar: ${data.mensaje}`,
       })
       automatizando.value = false
@@ -754,10 +776,8 @@ async function iniciarEjecucion() {
       cometidoNum: 0,
       rut: 'N/A',
       portalNombre: 'Red / Conexión',
-      accion: 'Conexión con backend Flask',
-      errorMensaje: e.message,
-      errorSelector: '',
-      errorPython: `ConnectionError: ${e.message}`,
+      accion: 'Comunicación con el servidor local',
+      errorMensaje: 'No se pudo contactar con el servidor de la aplicación.',
       texto: `Error de conexión: ${e.message}`,
     })
     automatizando.value = false
@@ -1204,7 +1224,7 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
 
         <!-- Render de logs interactivo y con checkpoints -->
         <template v-for="log in logsAutomatizacion" :key="log.id">
-          <!-- 1. Checkpoint de error con output de Python -->
+          <!-- 1. Tarjeta de error clara para el usuario -->
           <div
             v-if="log.tipo === 'checkpoint_error'"
             class="consola-card-error"
@@ -1212,7 +1232,8 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
           >
             <div class="card-error-header">
               <i class="bi bi-exclamation-octagon-fill text-danger fs-6"></i>
-              <span>CHECKPOINT: FALLO EN COMETIDO #{{ log.cometidoNum }} — {{ log.portalNombre }}</span>
+              <span v-if="log.cometidoNum > 0">Fallo en Cometido #{{ log.cometidoNum }} — {{ log.portalNombre }}</span>
+              <span v-else>No se pudo iniciar la automatización</span>
             </div>
             <div class="card-error-detalles">
               <div v-if="log.rut && log.rut !== 'N/A'" class="error-dato-item">
@@ -1220,30 +1241,18 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
                 <span class="error-dato-valor">{{ log.rut }}</span>
               </div>
               <div class="error-dato-item">
-                <span class="error-dato-clave">Acción interrumpida:</span>
+                <span class="error-dato-clave">Paso:</span>
                 <span class="error-dato-accion">{{ log.accion }}</span>
               </div>
               <div class="error-dato-item">
-                <span class="error-dato-clave">Causa del fallo:</span>
+                <span class="error-dato-clave">Motivo:</span>
                 <span class="error-dato-valor">{{ log.errorMensaje }}</span>
               </div>
-              <div v-if="log.errorSelector" class="error-dato-item">
-                <span class="error-dato-clave">Elemento / Selector:</span>
-                <code class="error-selector-code">{{ log.errorSelector }}</code>
-              </div>
             </div>
 
-            <!-- Output técnico retornado por Python -->
-            <div class="card-error-python">
-              <div class="python-header">
-                <i class="bi bi-filetype-py"></i> Output del Robot (Python Exception):
-              </div>
-              <pre class="python-code">{{ log.errorPython }}</pre>
-            </div>
-
-            <div class="card-error-footer">
-              <i class="bi bi-shield-check text-warning me-1"></i>
-              Aislamiento de fallo activo: el robot ejecutó <code>recuperar_entorno_limpio()</code> y continúa con el siguiente cometido.
+            <div v-if="log.cometidoNum > 0" class="card-error-footer">
+              <i class="bi bi-arrow-right-circle text-warning me-1"></i>
+              Se omitió este cometido y el proceso continuó con el siguiente.
             </div>
           </div>
 
@@ -1579,7 +1588,7 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
                       <button
                         class="btn-ver-error-fila"
                         @click.stop="inspeccionarErrorFila(idx)"
-                        title="Ver causa técnica del error en la terminal"
+                        title="Ver detalle del error"
                       >
                         <i class="bi bi-eye-fill me-1"></i>Ver detalle
                       </button>
@@ -1671,6 +1680,14 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
                   <i class="bi bi-file-earmark-bar-graph me-1"></i>
                   Ir al reporte final
                   <i class="bi bi-arrow-right ms-1"></i>
+                </button>
+                <button
+                  v-if="huboError && !automatizando"
+                  class="btn btn-primary btn-cta btn-sm py-2 px-3"
+                  @click="empezarAutomatizacion"
+                >
+                  <i class="bi bi-arrow-clockwise me-1"></i>
+                  Reintentar automatización
                 </button>
                 <button
                   v-if="automatizando"
@@ -1791,6 +1808,47 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
             </button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════ -->
+    <!-- MODAL DETALLE DE ERROR DE COMETIDO                     -->
+    <!-- ══════════════════════════════════════════════════════ -->
+    <div
+      v-if="detalleErrorModal"
+      class="modal-credenciales-backdrop"
+      @click.self="cerrarModalError"
+    >
+      <div class="consola-card-error modal-error-card">
+        <div class="card-error-header justify-content-between">
+          <div class="d-flex align-items-center gap-2">
+            <i class="bi bi-exclamation-octagon-fill text-danger fs-5"></i>
+            <span>Fallo en Cometido #{{ detalleErrorModal.cometidoNum }} — {{ detalleErrorModal.portalNombre }}</span>
+          </div>
+          <button type="button" class="btn-cerrar-modal" @click="cerrarModalError" title="Cerrar">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+
+        <div class="card-error-detalles">
+          <div v-if="detalleErrorModal.rut && detalleErrorModal.rut !== 'N/A'" class="error-dato-item">
+            <span class="error-dato-clave">Funcionario:</span>
+            <span class="error-dato-valor">{{ detalleErrorModal.rut }}</span>
+          </div>
+          <div class="error-dato-item">
+            <span class="error-dato-clave">Paso:</span>
+            <span class="error-dato-accion">{{ detalleErrorModal.accion }}</span>
+          </div>
+          <div class="error-dato-item">
+            <span class="error-dato-clave">Motivo:</span>
+            <span class="error-dato-valor">{{ detalleErrorModal.errorMensaje }}</span>
+          </div>
+        </div>
+
+        <div class="card-error-footer">
+          <i class="bi bi-arrow-right-circle text-warning me-1"></i>
+          Se omitió este cometido y el proceso continuó con el siguiente.
+        </div>
       </div>
     </div>
 
@@ -3369,5 +3427,25 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
   font-weight: 600;
   padding: 8px 18px;
   border-radius: 8px;
+}
+
+.modal-error-card {
+  width: 100%;
+  max-width: 580px;
+  padding: 18px 22px;
+  gap: 12px;
+  font-family: 'Consolas', 'Courier New', Courier, monospace;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.55), 0 0 24px rgba(239, 68, 68, 0.25);
+}
+
+.modal-error-card .card-error-header {
+  font-size: 14px;
+  padding-bottom: 10px;
+}
+
+.modal-error-card .card-error-detalles {
+  font-size: 13.5px;
+  gap: 8px;
+  padding: 4px 0;
 }
 </style>

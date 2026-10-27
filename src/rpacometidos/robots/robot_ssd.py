@@ -7,7 +7,8 @@ from rpacometidos.robots.base import (
 )
 from rpacometidos.robots.resiliencia import (
     ContextoRobot,
-    AccionError
+    AccionError,
+    CredencialesInvalidasError
 )
 from rpacometidos.procesador_datos import normalizar_rut
 
@@ -76,12 +77,12 @@ def _seleccionar_en_popup_ssd(pagina, input_locator, valor, nombre_campo, ctx):
         try:
             with pagina.expect_popup(timeout=8000) as popup_info:
                 input_locator.press("Enter")
-        except Exception as e:
+        except Exception:
             raise AccionError(
                 portal=ctx.portal,
                 paso_stepper=ctx.paso_stepper,
                 accion=f"Abriendo popup de búsqueda de {nombre_campo}",
-                mensaje=f"No se abrió el popup de búsqueda para '{nombre_campo}' al presionar Enter: {str(e)}",
+                mensaje=f"No se abrió la ventana de búsqueda para '{nombre_campo}' al presionar Enter.",
                 selector=str(input_locator)
             )
 
@@ -107,8 +108,29 @@ def login_ssd(pagina, usuario, clave):
     pagina.goto(url_login_ssd)
     ctx.escribir(pagina.locator('[name="txtUsuario"]'), usuario, "Ingresando usuario SSD", sensible=False)
     ctx.escribir(pagina.locator('[name="txtPass"]'), clave, "Ingresando contraseña SSD", sensible=True)
+
+    alerta_login = {"rechazado": False}
+    def _capturar_alerta_login(dialog):
+        alerta_login["rechazado"] = True
+        try:
+            dialog.accept()
+        except Exception:
+            pass
+
+    pagina.once("dialog", _capturar_alerta_login)
     ctx.hacer_clic(pagina.locator('[name="BtnEnviarRut"]'), "Enviando credenciales SSD")
     pagina.wait_for_load_state('networkidle')
+    time.sleep(0.8)
+    try:
+        pagina.remove_listener("dialog", _capturar_alerta_login)
+    except Exception:
+        pass
+
+    if alerta_login["rechazado"] or pagina.locator('[name="txtUsuario"]').is_visible():
+        raise CredencialesInvalidasError(
+            portal="ssd",
+            mensaje="Usuario o contraseña incorrectos al iniciar sesión en el Sistema SSD."
+        )
 
 def procesar_un_ssd(pagina, registro, fila=1, total_registros=1):
     """

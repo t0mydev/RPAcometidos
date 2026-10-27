@@ -4,7 +4,8 @@ from rpacometidos.robots.base import guardar_progreso
 from rpacometidos.robots.resiliencia import (
     ContextoRobot,
     esperar_overlays,
-    AccionError
+    AccionError,
+    CredencialesInvalidasError
 )
 
 def agregar_persona_firmador(pagina, nombre, rol, ctx):
@@ -28,11 +29,11 @@ def agregar_persona_firmador(pagina, nombre, rol, ctx):
         opcion = pagina.locator('.selectize-dropdown:visible .option').first
         opcion.wait_for(state="visible", timeout=6000)
         opcion.click()
-    except Exception as e:
+    except Exception:
         raise AccionError(
             portal=ctx.portal, paso_stepper=ctx.paso_stepper,
             accion="Seleccionando responsable en lista",
-            mensaje=f"No se encontró o no se pudo seleccionar a '{nombre_limpio}' en la lista de responsables: {str(e)}",
+            mensaje=f"No se encontró o no se pudo seleccionar a '{nombre_limpio}' en la lista de responsables.",
             selector='input[placeholder="Seleccione Responsable..."]'
         )
 
@@ -56,7 +57,13 @@ def login_firmador(pagina, usuario, clave):
     ctx.escribir(pagina.locator('#inp_usr'), usuario, "Ingresando usuario Firmador", sensible=False)
     ctx.escribir(pagina.locator('#inp_pass'), clave, "Ingresando contraseña Firmador", sensible=True)
     ctx.hacer_clic(pagina.locator('#btnLogin'), "Enviando credenciales Firmador")
-    pagina.wait_for_url(lambda u: u.strip("/") != url_login_firmador.strip("/"), timeout=15000)
+    try:
+        pagina.wait_for_url(lambda u: u.strip("/") != url_login_firmador.strip("/"), timeout=10000)
+    except Exception:
+        raise CredencialesInvalidasError(
+            portal="firmador",
+            mensaje="Usuario o contraseña incorrectos al iniciar sesión en el Portal Firmador."
+        )
     pagina.wait_for_load_state('networkidle')
     esperar_overlays(pagina)
 
@@ -107,11 +114,11 @@ def procesar_un_firmador(pagina, registro, fila=1, total_registros=1):
             "document.getElementById('inp_materia') && document.getElementById('inp_materia').value.trim() !== ''",
             timeout=12000
         )
-    except Exception as e:
+    except Exception:
         raise AccionError(
             portal=portal, paso_stepper=paso_stepper,
             accion="Cargando materia del proceso",
-            mensaje=f"No se cargó la materia para el N° de proceso '{numero_ssd}' en Firmador: {str(e)}",
+            mensaje=f"No se cargó la materia para el N° de proceso '{numero_ssd}' en Firmador.",
             selector="#inp_materia"
         )
 
@@ -153,11 +160,11 @@ def procesar_un_firmador(pagina, registro, fila=1, total_registros=1):
     modal_confirm = pagina.locator('#modConfirm')
     try:
         modal_confirm.wait_for(state="visible", timeout=12000)
-    except Exception as e:
+    except Exception:
         raise AccionError(
             portal=portal, paso_stepper=paso_stepper,
             accion="Esperando modal de confirmación de flujo",
-            mensaje=f"No apareció el modal de confirmación #modConfirm tras hacer clic en Crear Flujo: {str(e)}",
+            mensaje="No apareció la ventana de confirmación tras hacer clic en Crear Flujo.",
             selector="#modConfirm"
         )
 

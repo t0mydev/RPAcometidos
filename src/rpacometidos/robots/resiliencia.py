@@ -23,6 +23,16 @@ class AccionError(Exception):
             "selector": self.selector
         }
 
+
+class CredencialesInvalidasError(Exception):
+    """
+    Excepción lanzada cuando un portal institucional rechaza el usuario o contraseña.
+    """
+    def __init__(self, portal, mensaje):
+        super().__init__(mensaje)
+        self.portal = portal
+        self.mensaje = mensaje
+
 def esperar_overlays(locator_o_pagina, timeout_ms=8000):
     """
     Espera de forma preventiva a que overlays o indicadores de carga conocidos
@@ -120,13 +130,13 @@ def escribir(
                     return True
 
             time.sleep(0.25)
-        except Exception as e:
+        except Exception:
             if intento == max_reintentos:
                 raise AccionError(
                     portal=portal,
                     paso_stepper=paso_stepper,
                     accion=accion,
-                    mensaje=f"No se pudo escribir en el campo tras {max_reintentos} intentos. Error: {str(e)}",
+                    mensaje=f"No se pudo escribir en el campo tras {max_reintentos} intentos.",
                     selector=selector_str
                 )
             time.sleep(0.3)
@@ -171,13 +181,13 @@ def hacer_clic(
                 esperar_visible.wait_for(state="visible", timeout=7000)
 
             return True
-        except Exception as e:
+        except Exception:
             if intento == max_reintentos:
                 raise AccionError(
                     portal=portal,
                     paso_stepper=paso_stepper,
                     accion=accion,
-                    mensaje=f"Fallo al hacer clic tras {max_reintentos} intentos. Detalle: {str(e)}",
+                    mensaje=f"No se pudo hacer clic en el elemento tras {max_reintentos} intentos.",
                     selector=selector_str
                 )
             time.sleep(0.5)
@@ -223,13 +233,13 @@ def seleccionar(
                 pass
 
             time.sleep(0.2)
-        except Exception as e:
+        except Exception:
             if intento == max_reintentos:
                 raise AccionError(
                     portal=portal,
                     paso_stepper=paso_stepper,
                     accion=accion,
-                    mensaje=f"No se pudo seleccionar la opción '{valor_str}'. Detalle: {str(e)}",
+                    mensaje=f"No se pudo seleccionar la opción '{valor_str}'.",
                     selector=selector_str
                 )
             time.sleep(0.3)
@@ -272,12 +282,12 @@ def marcar_checkbox(
 
         if locator.is_checked() == marcar:
             return True
-    except Exception as e:
+    except Exception:
         raise AccionError(
             portal=portal,
             paso_stepper=paso_stepper,
             accion=accion,
-            mensaje=f"No se pudo {'marcar' if marcar else 'desmarcar'} el checkbox. Detalle: {str(e)}",
+            mensaje=f"No se pudo {'marcar' if marcar else 'desmarcar'} la casilla.",
             selector=selector_str
         )
 

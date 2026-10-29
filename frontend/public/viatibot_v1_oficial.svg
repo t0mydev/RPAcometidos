@@ -44,9 +44,6 @@
       
       <!-- LETRA 'V' EN CIAN NEÓN ELÉCTRICO -->
       <path d="M -195 -135 L -88 128 L -32 128 L 22 -135 L -28 -135 L -60 62 L -148 -135 Z" fill="url(#vCyanGrad)" />
-      
-      <!-- Detalle de sombra interior en la V -->
-      <path d="M -98 128 L -76 128 L 22 -124 L 6 -124 Z" fill="#0284C7" />
 
       <!-- LETRA 'B' EN BLANCO SÓLIDO (VANGUARDISTA) -->
       <path d="

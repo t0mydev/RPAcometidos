@@ -99,7 +99,6 @@ def procesar_un_firmador(pagina, registro, fila=1, total_registros=1):
 
     # 2. Número de Proceso
     ctx.escribir(pagina.locator('#inp_nroproceso'), numero_ssd, "Ingresando N° de proceso en Firmador")
-    #ctx.escribir(pagina.locator('#inp_nroproceso'), "20572460", "Ingresando N° de proceso de prueba en Firmador")  # Para pruebas directas sin pasar por SSD
 
     # 3. Buscar proceso
     ctx.hacer_clic(pagina.locator('#btnBussd'), "Buscando N° de proceso en Firmador")
@@ -140,7 +139,6 @@ def procesar_un_firmador(pagina, registro, fila=1, total_registros=1):
 
     # 7. Carga el archivo PDF del cometido
     ruta_pdf = str(registro.get('ruta_pdf', '')).strip()
-    #ruta_pdf = "/home/r0ars/Downloads/cometido.pdf"  # Para pruebas directas sin pasar por Personal
     if not ruta_pdf or not os.path.exists(ruta_pdf) or os.path.getsize(ruta_pdf) == 0:
         raise AccionError(
             portal=portal, paso_stepper=paso_stepper,
@@ -190,7 +188,11 @@ def procesar_un_firmador(pagina, registro, fila=1, total_registros=1):
     ctx.seleccionar(pagina.locator('#ddl_OficinaPartes_nom'), '456', "Seleccionando destino en oficina de partes")
 
     # 13. Confirma la creación del flujo
-    #ctx.hacer_clic(pagina.locator('#btnConfCreaFlujo'), "Confirmando creación de flujo")
+    ctx.hacer_clic(
+        pagina.locator('#btnConfCreaFlujo'),
+        "Confirmando creación de flujo",
+        esperar_oculto=modal_confirm
+    )
     pagina.wait_for_load_state('networkidle')
     esperar_overlays(pagina)
 

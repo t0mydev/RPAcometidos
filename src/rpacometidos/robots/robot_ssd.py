@@ -117,7 +117,7 @@ def login_ssd(pagina, usuario, clave):
         except Exception:
             pass
 
-    pagina.once("dialog", _capturar_alerta_login)
+    pagina.on("dialog", _capturar_alerta_login)
     ctx.hacer_clic(pagina.locator('[name="BtnEnviarRut"]'), "Enviando credenciales SSD")
     pagina.wait_for_load_state('networkidle')
     time.sleep(0.8)
@@ -140,11 +140,17 @@ def procesar_un_ssd(pagina, registro, fila=1, total_registros=1):
     numero_capturado = {}
 
     def manejar_dialogo_ssd(dialog):
-        texto = dialog.message
-        match = re.search(r'\d+', texto)
-        numero_capturado['numero'] = match.group() if match else ""
-        time.sleep(1)
-        dialog.accept()
+        try:
+            for _ in range(3):
+                texto = dialog.message or ""
+                match = re.search(r'\d+', texto)
+                if match:
+                    numero_capturado['numero'] = match.group()
+                    break
+                time.sleep(0.3)
+        finally:
+            time.sleep(0.5)
+            dialog.accept()
 
     rut_raw = str(registro.get('rut', '')).strip()
     ctx = ContextoRobot(pagina, "ssd", 2, fila=fila, total=total_registros, rut=rut_raw)
@@ -194,6 +200,13 @@ def procesar_un_ssd(pagina, registro, fila=1, total_registros=1):
         frm_main.locator('[name="Grabar"]'),
         "Grabando documento en SSD"
     )
+
+    # Verifica si se capturó el número; si no, espera 2 segundos y vuelve a revisar un par de veces
+    for _ in range(3):
+        if numero_capturado.get('numero'):
+            break
+        pagina.wait_for_timeout(2000)
+
     pagina.wait_for_load_state('networkidle')
 
     numero_proceso = numero_capturado.get('numero', '')

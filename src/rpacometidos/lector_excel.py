@@ -1,6 +1,26 @@
 import openpyxl
 import re
+from datetime import datetime, date
 from rpacometidos.procesador_datos import validar_registro
+
+
+def _es_celda_vacia(valor, ignorar_cero=False):
+    if valor is None:
+        return True
+    s = str(valor).strip()
+    if s == "" or s.lower() in ("nan", "none"):
+        return True
+    if ignorar_cero and s in ("0", "0.0", "0,0"):
+        return True
+    return False
+
+
+def _normalizar_celda_fecha(valor):
+    if _es_celda_vacia(valor):
+        return None
+    if isinstance(valor, (datetime, date)):
+        return valor.strftime("%d/%m/%Y")
+    return str(valor).strip()
 
 def normalizar_texto(texto):
     if not texto:
@@ -90,8 +110,8 @@ def procesar_planilla_completa(archivo_excel):
     for fila_indice in range(fila_encabezados + 1, hoja.max_row + 1):
         rut = hoja.cell(row=fila_indice, column=col_rut).value if col_rut else None
         sigla = hoja.cell(row=fila_indice, column=col_sigla).value if col_sigla else None
-        fechainicio = hoja.cell(row=fila_indice, column=col_fechainicio).value if col_fechainicio else None
-        fechatermino = hoja.cell(row=fila_indice, column=col_fechatermino).value if col_fechatermino else None
+        fechainicio = _normalizar_celda_fecha(hoja.cell(row=fila_indice, column=col_fechainicio).value) if col_fechainicio else None
+        fechatermino = _normalizar_celda_fecha(hoja.cell(row=fila_indice, column=col_fechatermino).value) if col_fechatermino else None
         tipo_movilizacion = hoja.cell(row=fila_indice, column=col_tipo_movilizacion).value if col_tipo_movilizacion else None
         lugar_cometido = hoja.cell(row=fila_indice, column=col_lugar_cometido).value if col_lugar_cometido else None
         region_principal = hoja.cell(row=fila_indice, column=col_region_principal).value if col_region_principal else None
@@ -110,14 +130,26 @@ def procesar_planilla_completa(archivo_excel):
         dias_40 = hoja.cell(row=fila_indice, column=col_dias_40).value if col_dias_40 else None
         dias_35 = hoja.cell(row=fila_indice, column=col_dias_35).value if col_dias_35 else None
 
-        # Ignora fila totalmente en blanco
-        if (rut is None and sigla is None and fechainicio is None and fechatermino is None and 
-            tipo_movilizacion is None and lugar_cometido is None and region_principal is None and 
-            regiones is None and personal_trasladado is None and nombre_aprobador is None and 
-            nombre_firmantes is None and tipo_imputacion_presupuestaria is None and 
-            fallback_considerando is None and atribucion is None and dias_salida is None and
-            dias_100 is None and dias_70 is None and dias_60 is None and dias_50 is None and 
-            dias_40 is None and dias_35 is None):
+        # Ignora fila en blanco (incluso si tiene celdas con espacios vacíos "" o ceros residuales)
+        campos_principales = [
+            rut, sigla, fechainicio, fechatermino, dias_salida,
+            lugar_cometido, personal_trasladado, fallback_considerando
+        ]
+        todos_campos_texto = [
+            rut, sigla, fechainicio, fechatermino, tipo_movilizacion,
+            lugar_cometido, region_principal, regiones, personal_trasladado,
+            nombre_aprobador, nombre_firmantes, tipo_imputacion_presupuestaria,
+            fallback_considerando, atribucion, dias_salida
+        ]
+        campos_porcentaje = [dias_100, dias_70, dias_60, dias_50, dias_40, dias_35]
+
+        if (
+            all(_es_celda_vacia(v) for v in todos_campos_texto) and
+            all(_es_celda_vacia(v, ignorar_cero=True) for v in campos_porcentaje)
+        ) or (
+            all(_es_celda_vacia(v) for v in campos_principales) and
+            all(_es_celda_vacia(v, ignorar_cero=True) for v in campos_porcentaje)
+        ):
             continue
         
         datos_fila = {
@@ -147,6 +179,7 @@ def procesar_planilla_completa(archivo_excel):
         resultado_fila = validar_registro(datos_fila)
         resultado_fila.update(datos_fila)
         resultado_fila["numero_fila_excel"] = fila_indice
+        resultado_fila["numero_cometido"] = len(reporte_final) + 1
 
         reporte_final.append(resultado_fila)
 

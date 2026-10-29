@@ -145,11 +145,16 @@ def guardar_datos_automatizacion(datos, archivo="datos_automatizacion.json"):
     except Exception:
         pass
 
-def cargar_credenciales():
+def cargar_credenciales(sistema=None):
     """
-    Obtiene usuario y contraseña desde las variables de entorno en memoria RAM
-    (RPA_USUARIO_MOP y RPA_CLAVE_MOP) para los 3 portales.
+    Obtiene usuario y contraseña desde las variables de entorno en memoria RAM.
+    - Para 'ssd': usa RPA_USUARIO_SSD y RPA_CLAVE_SSD.
+    - Para Personal y Firmador: usa RPA_USUARIO_MOP y RPA_CLAVE_MOP.
     """
+    if sistema == "ssd":
+        usuario = os.environ.get("RPA_USUARIO_SSD", "").strip()
+        clave = os.environ.get("RPA_CLAVE_SSD", "")
+        return usuario, clave
     usuario = os.environ.get("RPA_USUARIO_MOP", "").strip()
     clave = os.environ.get("RPA_CLAVE_MOP", "")
     return usuario, clave

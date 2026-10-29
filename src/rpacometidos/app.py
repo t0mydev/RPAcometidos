@@ -68,7 +68,8 @@ def descargar_excel_corregido():
         # Mapea los encabezados para saber las columnas a modificar
         from rpacometidos.lector_excel import (
             buscar_columna,
-            HEADER_RUT, HEADER_SIGLA, HEADER_TIPO_MOVILIZACION,
+            HEADER_RUT, HEADER_FECHA_INICIO, HEADER_FECHA_TERMINO,
+            HEADER_SIGLA, HEADER_TIPO_MOVILIZACION,
             HEADER_LUGAR_COMETIDO, HEADER_REGION_PRINCIPAL, HEADER_REGIONES,
             HEADER_PERSONAL_TRASLADADO, HEADER_NOMBRE_APROBADOR, HEADER_NOMBRE_FIRMANTES,
             HEADER_TIPO_IMPUTACION_PRESUPUESTARIA, HEADER_FALLBACK_CONSIDERANDO,
@@ -79,6 +80,8 @@ def descargar_excel_corregido():
 
         COLUMNAS = [
             ("rut",                          HEADER_RUT),
+            ("fechainicio",                  HEADER_FECHA_INICIO),
+            ("fechatermino",                 HEADER_FECHA_TERMINO),
             ("sigla",                        HEADER_SIGLA),
             ("tipo_movilizacion",            HEADER_TIPO_MOVILIZACION),
             ("lugar_cometido",               HEADER_LUGAR_COMETIDO),
@@ -148,6 +151,8 @@ def empezar_automatizacion():
             datos = body
             credenciales = {}
 
+        usuario_ssd = str(credenciales.get("usuario_ssd") or "").strip()
+        clave_ssd = str(credenciales.get("clave_ssd") or "")
         usuario_mop = str(credenciales.get("usuario") or "").strip()
         clave_mop = str(credenciales.get("clave") or "")
         
@@ -174,6 +179,10 @@ def empezar_automatizacion():
 
         # Inyecta las credenciales exclusivamente en la memoria RAM del subproceso hijo
         env_proceso = os.environ.copy()
+        if usuario_ssd:
+            env_proceso["RPA_USUARIO_SSD"] = usuario_ssd
+        if clave_ssd:
+            env_proceso["RPA_CLAVE_SSD"] = clave_ssd
         if usuario_mop:
             env_proceso["RPA_USUARIO_MOP"] = usuario_mop
         if clave_mop:

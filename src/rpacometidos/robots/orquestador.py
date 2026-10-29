@@ -26,7 +26,8 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=400):
     if datos_excel is None:
         datos_excel = cargar_datos_automatizacion()
 
-    usuario, clave = cargar_credenciales()
+    usuario_ssd, clave_ssd = cargar_credenciales(sistema="ssd")
+    usuario_mop, clave_mop = cargar_credenciales(sistema="mop")
     total_registros = len(datos_excel)
 
     try:
@@ -47,9 +48,9 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=400):
             pagina_firmador = contexto.new_page()
 
             # 3. Iniciar sesión una sola vez en cada sistema
-            login_ssd(pagina_ssd, usuario, clave)
-            login_cometidos(pagina_cometidos, usuario, clave)
-            login_firmador(pagina_firmador, usuario, clave)
+            login_ssd(pagina_ssd, usuario_ssd, clave_ssd)
+            login_cometidos(pagina_cometidos, usuario_mop, clave_mop)
+            login_firmador(pagina_firmador, usuario_mop, clave_mop)
 
             # 4. Procesa cometido por cometido de forma secuencial
             for fila, registro in enumerate(datos_excel, start=1):

@@ -223,10 +223,15 @@ const totalErrores = computed(() =>
 )
 
 const tieneSugerencias = computed(() =>
-  filas.value.some(f =>
-    (!f.rut_valido && f.sugerencia_correccion_rut) ||
-    (!f.sigla_valida && f.sugerencia_correccion_sigla)
-  )
+  filas.value.some(f => {
+    if (!f.rut_valido && f.sugerencia_correccion_rut) return true
+    if (!f.sigla_valida && f.sugerencia_correccion_sigla) return true
+    const dIni = parsearFechaDMY(f.fechainicio)
+    const dTer = parsearFechaDMY(f.fechatermino)
+    if (dIni && dTer && dIni > dTer) return true
+    if (!String(f.dias_salida || '').trim() && dIni && dTer && dIni <= dTer) return true
+    return false
+  })
 )
 
 const todasValidas = computed(() =>
@@ -742,13 +747,16 @@ async function iniciarEjecucion() {
       body: JSON.stringify({
         filas: payload,
         credenciales: {
+          usuario_ssd: credencialUsuarioSsd.value.trim(),
+          clave_ssd: credencialClaveSsd.value,
           usuario: credencialUsuario.value.trim(),
           clave: credencialClave.value,
         },
       }),
     })
 
-    // Limpia la contraseña en el navegador tras enviarla al backend
+    // Limpia las contraseñas en el navegador tras enviarlas al backend
+    credencialClaveSsd.value = ''
     credencialClave.value = ''
 
     if (!resp.ok) throw new Error(`El servidor respondió con estado ${resp.status}`)
@@ -1043,6 +1051,40 @@ function aplicarTodasLasSugerencias() {
       f.errores = (f.errores || []).filter(e => !e.toLowerCase().includes('sigla'))
       modificada = true
     }
+    // Auto-intercambiar fechas si inicio > término
+    const dIni = parsearFechaDMY(f.fechainicio)
+    const dTer = parsearFechaDMY(f.fechatermino)
+    if (dIni && dTer && dIni > dTer) {
+      const tmp = f.fechainicio
+      f.fechainicio = f.fechatermino
+      f.fechatermino = tmp
+      f.fechas_validas = true
+      if (f.errores_por_grupo?.admin) {
+        f.errores_por_grupo.admin = f.errores_por_grupo.admin.filter(m => !m.toLowerCase().includes('fecha'))
+      }
+      f.errores = (f.errores || []).filter(e => !e.toLowerCase().includes('fecha'))
+      revalidarAdminFila(f)
+      modificada = true
+    }
+    // Deducir días de salida si estaba vacío y las fechas son válidas
+    const dIniOk = parsearFechaDMY(f.fechainicio)
+    const dTerOk = parsearFechaDMY(f.fechatermino)
+    if (!String(f.dias_salida || '').trim() && dIniOk && dTerOk && dIniOk <= dTerOk) {
+      const diasCalculados = calcularDiasSemanaEntreFechas(dIniOk, dTerOk)
+      if (diasCalculados.length > 0) {
+        f.dias_salida = diasCalculados.join(', ')
+        if (f.errores_por_grupo?.admin) {
+          f.errores_por_grupo.admin = f.errores_por_grupo.admin.filter(m => !m.toLowerCase().includes('días de salida'))
+        }
+        f.errores = (f.errores || []).filter(e => !e.toLowerCase().includes('días de salida'))
+        revalidarAdminFila(f)
+        if (Math.abs(diasCalculados.length - sumarViaticos(f)) < 0.01) {
+          f.viaticos_validos = true
+          if (f.errores_por_grupo?.viaticos) f.errores_por_grupo.viaticos = []
+        }
+        modificada = true
+      }
+    }
     if (modificada) {
       filasCorregidasRecientes.value.add(f.numero_fila_excel)
     }
@@ -1066,6 +1108,7 @@ async function descargarExcelCorregido() {
   const payload = filas.value.map(f => ({
     numero_fila_excel: f.numero_fila_excel,
     rut: f.rut, nombre: f.nombre, sigla: f.sigla,
+    fechainicio: f.fechainicio, fechatermino: f.fechatermino,
     lugar_cometido: f.lugar_cometido, region_principal: f.region_principal,
     regiones: f.regiones, personal_trasladado: f.personal_trasladado,
     nombre_aprobador: f.nombre_aprobador, nombre_firmantes: f.nombre_firmantes,
@@ -1097,8 +1140,328 @@ async function descargarExcelCorregido() {
   }
 }
 
+// ─── Modal de Corrección de Días y Viáticos / Fechas ──────────
+const DIAS_SEMANA_OPCIONES = [
+  { id: 'LUNES',     label: 'Lunes',     corto: 'LU' },
+  { id: 'MARTES',    label: 'Martes',    corto: 'MA' },
+  { id: 'MIERCOLES', label: 'Miércoles', corto: 'MI' },
+  { id: 'JUEVES',    label: 'Jueves',    corto: 'JU' },
+  { id: 'VIERNES',   label: 'Viernes',   corto: 'VI' },
+  { id: 'SABADO',    label: 'Sábado',    corto: 'SA' },
+  { id: 'DOMINGO',   label: 'Domingo',   corto: 'DO' },
+]
+
+const PORCENTAJES_VIATICOS = [
+  { campo: 'dias_100', label: 'Días al 100%' },
+  { campo: 'dias_70',  label: 'Días al 70%'  },
+  { campo: 'dias_60',  label: 'Días al 60%'  },
+  { campo: 'dias_50',  label: 'Días al 50%'  },
+  { campo: 'dias_40',  label: 'Días al 40%'  },
+  { campo: 'dias_35',  label: 'Días al 35%'  },
+]
+
+const filaEditandoViaticos = ref(null)
+const editDiasSeleccionados = ref([])
+const editPorcentajes = ref({
+  dias_100: 0, dias_70: 0, dias_60: 0, dias_50: 0, dias_40: 0, dias_35: 0,
+})
+
+const filaEditandoFechas = ref(null)
+const editFechaInicio = ref('')
+const editFechaTermino = ref('')
+const errorModalFechas = ref('')
+
+function normalizarNombreDia(d) {
+  return String(d || '')
+    .trim()
+    .toUpperCase()
+    .replace('Á', 'A')
+    .replace('É', 'E')
+    .replace('Í', 'I')
+    .replace('Ó', 'O')
+    .replace('Ú', 'U')
+}
+
+function parsearFechaDMY(str) {
+  if (!str) return null
+  const partes = String(str).trim().split(/[/-]/)
+  if (partes.length !== 3) return null
+  const [d, m, y] = partes.map(Number)
+  if (!d || !m || !y || y < 1900) return null
+  const dt = new Date(y, m - 1, d)
+  if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return null
+  return dt
+}
+
+function calcularDiasSemanaEntreFechas(dIni, dTer) {
+  const mapaJs = ['DOMINGO', 'LUNES', 'MARTES', 'MIERCOLES', 'JUEVES', 'VIERNES', 'SABADO']
+  const diasSet = new Set()
+  const curr = new Date(dIni)
+  let guard = 0
+  while (curr <= dTer && guard < 31) {
+    diasSet.add(mapaJs[curr.getDay()])
+    curr.setDate(curr.getDate() + 1)
+    guard++
+  }
+  const orden = DIAS_SEMANA_OPCIONES.map(d => d.id)
+  return [...diasSet].sort((a, b) => orden.indexOf(a) - orden.indexOf(b))
+}
+
+function abrirModalViaticos(fila) {
+  filaEditandoViaticos.value = fila
+  const actuales = String(fila.dias_salida || '')
+    .split(',')
+    .map(normalizarNombreDia)
+    .filter(d => DIAS_SEMANA_OPCIONES.some(op => op.id === d))
+  editDiasSeleccionados.value = [...new Set(actuales)]
+
+  PORCENTAJES_VIATICOS.forEach(({ campo }) => {
+    const val = parseFloat(String(fila[campo] ?? '').replace(',', '.'))
+    editPorcentajes.value[campo] = !isNaN(val) && val > 0 ? val : 0
+  })
+}
+
+function cerrarModalViaticos() {
+  filaEditandoViaticos.value = null
+}
+
+function fechasDeFilaValidas(fila) {
+  if (!fila || fila.fechas_validas === false) return false
+  const dIni = parsearFechaDMY(fila.fechainicio)
+  const dTer = parsearFechaDMY(fila.fechatermino)
+  return Boolean(dIni && dTer && dIni <= dTer)
+}
+
+const fechasViaticosValidas = computed(() => {
+  return fechasDeFilaValidas(filaEditandoViaticos.value)
+})
+
+function irACorregirFechasDesdeViaticos() {
+  const fila = filaEditandoViaticos.value
+  cerrarModalViaticos()
+  if (fila) abrirModalFechas(fila)
+}
+
+function obtenerDiasEsperadosDeFila(fila) {
+  if (!fila) return []
+  const dIni = parsearFechaDMY(fila.fechainicio)
+  const dTer = parsearFechaDMY(fila.fechatermino)
+  if (!dIni || !dTer || dIni > dTer) return []
+  return calcularDiasSemanaEntreFechas(dIni, dTer)
+}
+
+const diasEsperadosPorFecha = computed(() => {
+  return obtenerDiasEsperadosDeFila(filaEditandoViaticos.value)
+})
+
+const diasEsperadosTexto = computed(() => {
+  return diasEsperadosPorFecha.value
+    .map(id => DIAS_SEMANA_OPCIONES.find(d => d.id === id)?.label || id)
+    .join(', ')
+})
+
+const diasCoincidenConFecha = computed(() => {
+  if (!fechasViaticosValidas.value) return false
+  const esperados = diasEsperadosPorFecha.value
+  const seleccionados = editDiasSeleccionados.value
+  if (esperados.length === 0) return false
+  if (seleccionados.length !== esperados.length) return false
+  return esperados.every(d => seleccionados.includes(d))
+})
+
+function toggleDiaSeleccionado(diaId) {
+  if (!fechasViaticosValidas.value) return
+  const esperados = diasEsperadosPorFecha.value
+  if (esperados.length > 0 && !esperados.includes(diaId)) return
+  const idx = editDiasSeleccionados.value.indexOf(diaId)
+  if (idx >= 0) {
+    editDiasSeleccionados.value.splice(idx, 1)
+  } else {
+    editDiasSeleccionados.value.push(diaId)
+    const orden = DIAS_SEMANA_OPCIONES.map(d => d.id)
+    editDiasSeleccionados.value.sort((a, b) => orden.indexOf(a) - orden.indexOf(b))
+  }
+}
+
+function deducirDiasDesdeFechas() {
+  if (!filaEditandoViaticos.value || !fechasViaticosValidas.value) return
+  const esperados = diasEsperadosPorFecha.value
+  if (esperados.length > 0) {
+    editDiasSeleccionados.value = [...esperados]
+  }
+}
+
+function igualarPorcentajes(modo) {
+  if (!fechasViaticosValidas.value) return
+  const total = editDiasSeleccionados.value.length
+  if (total <= 0) return
+  PORCENTAJES_VIATICOS.forEach(({ campo }) => { editPorcentajes.value[campo] = 0 })
+  if (modo === '40') {
+    editPorcentajes.value.dias_40 = total
+  } else if (modo === '100_40') {
+    editPorcentajes.value.dias_100 = Math.max(0, total - 1)
+    editPorcentajes.value.dias_40 = 1
+  }
+}
+
+const sumaEditPorcentajes = computed(() => {
+  return PORCENTAJES_VIATICOS.reduce((acc, { campo }) => {
+    const v = parseFloat(editPorcentajes.value[campo])
+    return acc + (isNaN(v) || v < 0 ? 0 : v)
+  }, 0)
+})
+
+const viaticosEditCoinciden = computed(() => {
+  if (!fechasViaticosValidas.value) return false
+  const nDias = editDiasSeleccionados.value.length
+  return diasCoincidenConFecha.value && nDias > 0 && Math.abs(nDias - sumaEditPorcentajes.value) < 0.01
+})
+
+function revalidarAdminFila(fila) {
+  const dIni = parsearFechaDMY(fila.fechainicio)
+  const dTer = parsearFechaDMY(fila.fechatermino)
+  const fechasOk = Boolean(dIni && dTer && dIni <= dTer)
+  fila.fechas_validas = fechasOk
+  const obligatoriosOk = Boolean(
+    String(fila.fechainicio || '').trim() &&
+    String(fila.fechatermino || '').trim() &&
+    String(fila.dias_salida || '').trim() &&
+    String(fila.sigla || '').trim()
+  )
+  fila.admin_valido = fechasOk && obligatoriosOk
+  if (fila.admin_valido && fila.errores_por_grupo) {
+    fila.errores_por_grupo.admin = []
+  }
+}
+
+function guardarCorreccionViaticos() {
+  if (!filaEditandoViaticos.value || !viaticosEditCoinciden.value) return
+  const fila = filaEditandoViaticos.value
+  fila.dias_salida = editDiasSeleccionados.value.join(', ')
+  PORCENTAJES_VIATICOS.forEach(({ campo }) => {
+    const val = parseFloat(editPorcentajes.value[campo])
+    fila[campo] = !isNaN(val) && val > 0 ? val : 0
+  })
+  fila.viaticos_validos = true
+  if (fila.errores_por_grupo) {
+    fila.errores_por_grupo.viaticos = []
+    if (fila.errores_por_grupo.admin) {
+      fila.errores_por_grupo.admin = fila.errores_por_grupo.admin.filter(
+        m => !m.toLowerCase().includes('días de salida')
+      )
+    }
+  }
+  fila.errores = (fila.errores || []).filter(
+    e => !e.toLowerCase().includes('porcentajes') && !e.toLowerCase().includes('días de salida')
+  )
+  revalidarAdminFila(fila)
+  recalcularGrupos()
+  correccionesAplicadas.value = true
+
+  filasCorregidasRecientes.value.add(fila.numero_fila_excel)
+  setTimeout(() => {
+    filasCorregidasRecientes.value.delete(fila.numero_fila_excel)
+  }, 1400)
+  cerrarModalViaticos()
+}
+
+function abrirModalFechas(fila) {
+  filaEditandoFechas.value = fila
+  editFechaInicio.value = String(fila.fechainicio || '').trim()
+  editFechaTermino.value = String(fila.fechatermino || '').trim()
+  errorModalFechas.value = ''
+}
+
+function cerrarModalFechas() {
+  filaEditandoFechas.value = null
+  errorModalFechas.value = ''
+}
+
+function intercambiarFechasModal() {
+  const tmp = editFechaInicio.value
+  editFechaInicio.value = editFechaTermino.value
+  editFechaTermino.value = tmp
+  errorModalFechas.value = ''
+}
+
+function revalidarViaticosFila(fila) {
+  const esperados = obtenerDiasEsperadosDeFila(fila)
+  const actuales = [...new Set(
+    String(fila.dias_salida || '')
+      .split(',')
+      .map(normalizarNombreDia)
+      .filter(d => DIAS_SEMANA_OPCIONES.some(op => op.id === d))
+  )]
+  const sumaPorc = PORCENTAJES_VIATICOS.reduce((acc, { campo }) => {
+    const v = parseFloat(String(fila[campo] ?? '').replace(',', '.'))
+    return acc + (isNaN(v) || v < 0 ? 0 : v)
+  }, 0)
+
+  const coincideFecha = esperados.length === 0
+    ? actuales.length > 0
+    : (actuales.length === esperados.length && esperados.every(d => actuales.includes(d)))
+  const coincidePorc = actuales.length > 0 && Math.abs(actuales.length - sumaPorc) < 0.01
+
+  fila.viaticos_validos = coincideFecha && coincidePorc
+  if (!fila.errores_por_grupo) fila.errores_por_grupo = { rut: [], viaticos: [], admin: [] }
+
+  if (fila.viaticos_validos) {
+    fila.errores_por_grupo.viaticos = []
+    fila.errores = (fila.errores || []).filter(
+      e => !e.toLowerCase().includes('porcentajes') && !e.toLowerCase().includes('días de salida')
+    )
+  } else {
+    const nuevosErrores = []
+    if (!coincideFecha && esperados.length > 0) {
+      const espTxt = esperados.map(id => DIAS_SEMANA_OPCIONES.find(d => d.id === id)?.label || id).join(', ')
+      nuevosErrores.push(`Los días de salida no coinciden con el rango de fechas (según fechas corresponde: ${espTxt}).`)
+    }
+    if (!coincidePorc) {
+      nuevosErrores.push(`Se indicaron ${actuales.length} día(s) de salida pero los porcentajes suman ${sumaPorc}.`)
+    }
+    fila.errores_por_grupo.viaticos = nuevosErrores
+  }
+}
+
+function guardarCorreccionFechas() {
+  if (!filaEditandoFechas.value) return
+  const dIni = parsearFechaDMY(editFechaInicio.value)
+  const dTer = parsearFechaDMY(editFechaTermino.value)
+  if (!dIni || !dTer) {
+    errorModalFechas.value = 'Ambas fechas deben tener formato válido DD/MM/AAAA.'
+    return
+  }
+  if (dIni > dTer) {
+    errorModalFechas.value = 'La fecha de inicio no puede ser posterior a la fecha de término.'
+    return
+  }
+  const fila = filaEditandoFechas.value
+  fila.fechainicio = editFechaInicio.value.trim()
+  fila.fechatermino = editFechaTermino.value.trim()
+  fila.fechas_validas = true
+  if (fila.errores_por_grupo?.admin) {
+    fila.errores_por_grupo.admin = fila.errores_por_grupo.admin.filter(
+      m => !m.toLowerCase().includes('fecha')
+    )
+  }
+  fila.errores = (fila.errores || []).filter(e => !e.toLowerCase().includes('fecha'))
+  revalidarAdminFila(fila)
+  revalidarViaticosFila(fila)
+  recalcularGrupos()
+  correccionesAplicadas.value = true
+
+  filasCorregidasRecientes.value.add(fila.numero_fila_excel)
+  setTimeout(() => {
+    filasCorregidasRecientes.value.delete(fila.numero_fila_excel)
+  }, 1400)
+  cerrarModalFechas()
+}
+
 // ─── Modal de Credenciales ────────────────────────────────────
 const mostrarModalCredenciales = ref(false)
+const credencialUsuarioSsd     = ref('')
+const credencialClaveSsd       = ref('')
+const mostrarClaveSsd          = ref(false)
 const credencialUsuario        = ref('')
 const credencialClave          = ref('')
 const mostrarClave             = ref(false)
@@ -1106,6 +1469,7 @@ const errorCredenciales        = ref('')
 
 function empezarAutomatizacion() {
   errorCredenciales.value = ''
+  mostrarClaveSsd.value = false
   mostrarClave.value = false
   mostrarModalCredenciales.value = true
 }
@@ -1113,12 +1477,18 @@ function empezarAutomatizacion() {
 function cerrarModalCredenciales() {
   mostrarModalCredenciales.value = false
   errorCredenciales.value = ''
+  credencialClaveSsd.value = ''
   credencialClave.value = ''
 }
 
 function confirmarCredencialesEIniciar() {
-  if (!credencialUsuario.value.trim() || !credencialClave.value) {
-    errorCredenciales.value = 'Debes ingresar tu usuario y contraseña institucional.'
+  if (
+    !credencialUsuarioSsd.value.trim() ||
+    !credencialClaveSsd.value ||
+    !credencialUsuario.value.trim() ||
+    !credencialClave.value
+  ) {
+    errorCredenciales.value = 'Debes ingresar el usuario y contraseña tanto para SSD como para Personal y Firmador.'
     return
   }
   mostrarModalCredenciales.value = false
@@ -1507,11 +1877,23 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
                 <!-- Fechas -->
                 <td class="col-fechas">
                   <div class="fechas-bloque"
-                    :class="{ 'celda-error': filaTieneError(fila,'fechas') || filaTieneError(fila,'fechainicio') || filaTieneError(fila,'fechatermino') }">
-                    <span class="fecha-chip">{{ fila.fechainicio || '—' }}</span>
-                    <i class="bi bi-arrow-right fecha-sep"></i>
-                    <span class="fecha-chip">{{ fila.fechatermino || '—' }}</span>
-                    <i v-if="filaTieneError(fila,'fechas')" class="bi bi-exclamation-triangle-fill text-danger ms-1"></i>
+                    :class="{
+                      'celda-error': filaTieneError(fila,'fechas') || filaTieneError(fila,'fechainicio') || filaTieneError(fila,'fechatermino'),
+                      'celda-corregida-pulso': filasCorregidasRecientes.has(fila.numero_fila_excel)
+                    }">
+                    <div class="d-flex align-items-center gap-1 flex-wrap">
+                      <span class="fecha-chip">{{ fila.fechainicio || '—' }}</span>
+                      <i class="bi bi-arrow-right fecha-sep"></i>
+                      <span class="fecha-chip">{{ fila.fechatermino || '—' }}</span>
+                      <i v-if="filaTieneError(fila,'fechas') || filaTieneError(fila,'fechainicio') || filaTieneError(fila,'fechatermino')" class="bi bi-exclamation-triangle-fill text-danger ms-1"></i>
+                    </div>
+                    <div v-if="etapaActual === 1 && (filaTieneError(fila,'fechas') || filaTieneError(fila,'fechainicio') || filaTieneError(fila,'fechatermino'))" class="sugerencia-inline mt-1">
+                      <i class="bi bi-lightbulb-fill text-warning"></i>
+                      <span>Fechas observadas</span>
+                      <button class="btn-corregir-inline" @click="abrirModalFechas(fila)">
+                        Corregir
+                      </button>
+                    </div>
                   </div>
                 </td>
 
@@ -1536,7 +1918,7 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
 
                 <!-- Días de salida (chips abreviados) -->
                 <td class="col-dias">
-                  <div class="dias-chips">
+                  <div class="dias-chips" :class="{ 'celda-corregida-pulso': filasCorregidasRecientes.has(fila.numero_fila_excel) }">
                     <span
                       v-for="chip in chipsDias(fila.dias_salida)"
                       :key="chip"
@@ -1548,12 +1930,24 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
 
                 <!-- Viáticos -->
                 <td class="col-viaticos">
-                  <div class="viaticos-bloque" :class="{ 'celda-error': filaTieneError(fila,'viaticos') }">
+                  <div class="viaticos-bloque"
+                    :class="{
+                      'celda-error': filaTieneError(fila,'viaticos') || filaTieneError(fila,'dias_salida'),
+                      'celda-corregida-pulso': filasCorregidasRecientes.has(fila.numero_fila_excel)
+                    }">
                     <span class="viaticos-dias">
                       {{ contarDiasSalida(fila.dias_salida) }} día(s)
-                      <i v-if="filaTieneError(fila,'viaticos')" class="bi bi-exclamation-triangle-fill text-danger ms-1"></i>
+                      <i v-if="filaTieneError(fila,'viaticos') || filaTieneError(fila,'dias_salida')" class="bi bi-exclamation-triangle-fill text-danger ms-1"></i>
                     </span>
                     <span class="viaticos-detalle">{{ resumenViaticos(fila) }}</span>
+                    <!-- Corrección de Días y Viáticos -->
+                    <div v-if="etapaActual === 1 && (filaTieneError(fila,'viaticos') || filaTieneError(fila,'dias_salida'))" class="sugerencia-inline mt-1">
+                      <i class="bi bi-lightbulb-fill text-warning"></i>
+                      <span>Suma {{ sumarViaticos(fila) }} vs {{ contarDiasSalida(fila.dias_salida) }}d</span>
+                      <button class="btn-corregir-inline" @click="abrirModalViaticos(fila)">
+                        Corregir
+                      </button>
+                    </div>
                   </div>
                 </td>
 
@@ -1616,7 +2010,7 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
         <div v-if="etapaActual === 1 && !procesando && filas.length > 0" class="cta-zona">
           <p v-if="totalErrores > 0" class="cta-aviso">
             <i class="bi bi-exclamation-triangle-fill me-2"></i>
-            Corrige los <strong>{{ totalErrores }}</strong> problema(s) detectado(s) para poder continuar
+            Corrige los&nbsp;<strong>{{ totalErrores }}</strong>&nbsp;problema(s) detectado(s) para poder continuar
           </p>
           <button
             class="btn btn-primary btn-cta"
@@ -1732,7 +2126,7 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
             </div>
             <div>
               <h5 class="modal-credenciales-titulo mb-0">Credenciales Institucionales MOP</h5>
-              <span class="modal-credenciales-subtitulo">Acceso único para SSD, Portal Personal y Firmador</span>
+              <span class="modal-credenciales-subtitulo">Acceso para Sistema SSD, Portal Personal y Firmador</span>
             </div>
           </div>
           <button type="button" class="btn-cerrar-modal" @click="cerrarModalCredenciales">
@@ -1748,44 +2142,96 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
             </span>
           </div>
 
-          <div class="mb-3">
-            <label class="form-label modal-credenciales-label">Usuario</label>
-            <div class="input-group">
-              <span class="input-group-text modal-input-addon">
-                <i class="bi bi-person-fill"></i>
-              </span>
-              <input
-                v-model="credencialUsuario"
-                type="text"
-                class="form-control modal-input"
-                placeholder="Ingresa tu usuario institucional"
-                autocomplete="username"
-                autofocus
-              />
+          <!-- Bloque 1: Sistema SSD -->
+          <div class="credenciales-seccion mb-3">
+            <div class="credenciales-seccion-titulo">
+              <i class="bi bi-file-earmark-text me-1"></i>1. Sistema SSD
+            </div>
+            <div class="mb-2">
+              <label class="form-label modal-credenciales-label">Usuario SSD</label>
+              <div class="input-group">
+                <span class="input-group-text modal-input-addon">
+                  <i class="bi bi-person-fill"></i>
+                </span>
+                <input
+                  v-model="credencialUsuarioSsd"
+                  type="text"
+                  class="form-control modal-input"
+                  placeholder="Ingresa tu usuario de SSD"
+                  autocomplete="username"
+                  autofocus
+                />
+              </div>
+            </div>
+
+            <div>
+              <label class="form-label modal-credenciales-label">Contraseña SSD</label>
+              <div class="input-group">
+                <span class="input-group-text modal-input-addon">
+                  <i class="bi bi-key-fill"></i>
+                </span>
+                <input
+                  v-model="credencialClaveSsd"
+                  :type="mostrarClaveSsd ? 'text' : 'password'"
+                  class="form-control modal-input"
+                  placeholder="Ingresa tu contraseña de SSD"
+                  autocomplete="current-password"
+                />
+                <button
+                  type="button"
+                  class="btn btn-outline-secondary modal-btn-ojo"
+                  @click="mostrarClaveSsd = !mostrarClaveSsd"
+                  tabindex="-1"
+                >
+                  <i :class="mostrarClaveSsd ? 'bi bi-eye-slash-fill' : 'bi bi-eye-fill'"></i>
+                </button>
+              </div>
             </div>
           </div>
 
-          <div class="mb-2">
-            <label class="form-label modal-credenciales-label">Contraseña</label>
-            <div class="input-group">
-              <span class="input-group-text modal-input-addon">
-                <i class="bi bi-key-fill"></i>
-              </span>
-              <input
-                v-model="credencialClave"
-                :type="mostrarClave ? 'text' : 'password'"
-                class="form-control modal-input"
-                placeholder="Ingresa tu contraseña"
-                autocomplete="current-password"
-              />
-              <button
-                type="button"
-                class="btn btn-outline-secondary modal-btn-ojo"
-                @click="mostrarClave = !mostrarClave"
-                tabindex="-1"
-              >
-                <i :class="mostrarClave ? 'bi bi-eye-slash-fill' : 'bi bi-eye-fill'"></i>
-              </button>
+          <!-- Bloque 2: Portal Personal y Firmador -->
+          <div class="credenciales-seccion mb-2">
+            <div class="credenciales-seccion-titulo">
+              <i class="bi bi-person-badge me-1"></i>2. Portal Personal y Firmador
+            </div>
+            <div class="mb-2">
+              <label class="form-label modal-credenciales-label">Usuario</label>
+              <div class="input-group">
+                <span class="input-group-text modal-input-addon">
+                  <i class="bi bi-person-fill"></i>
+                </span>
+                <input
+                  v-model="credencialUsuario"
+                  type="text"
+                  class="form-control modal-input"
+                  placeholder="Ingresa tu usuario institucional"
+                  autocomplete="username"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label class="form-label modal-credenciales-label">Contraseña</label>
+              <div class="input-group">
+                <span class="input-group-text modal-input-addon">
+                  <i class="bi bi-key-fill"></i>
+                </span>
+                <input
+                  v-model="credencialClave"
+                  :type="mostrarClave ? 'text' : 'password'"
+                  class="form-control modal-input"
+                  placeholder="Ingresa tu contraseña"
+                  autocomplete="current-password"
+                />
+                <button
+                  type="button"
+                  class="btn btn-outline-secondary modal-btn-ojo"
+                  @click="mostrarClave = !mostrarClave"
+                  tabindex="-1"
+                >
+                  <i :class="mostrarClave ? 'bi bi-eye-slash-fill' : 'bi bi-eye-fill'"></i>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1849,6 +2295,243 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
           <i class="bi bi-arrow-right-circle text-warning me-1"></i>
           Se omitió este cometido y el proceso continuó con el siguiente.
         </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════ -->
+    <!-- MODAL CORRECCIÓN DE DÍAS Y VIÁTICOS                    -->
+    <!-- ══════════════════════════════════════════════════════ -->
+    <div
+      v-if="filaEditandoViaticos"
+      class="modal-credenciales-backdrop"
+      @click.self="cerrarModalViaticos"
+    >
+      <div class="modal-credenciales-card modal-viaticos-card">
+        <div class="modal-credenciales-header">
+          <div class="d-flex align-items-center gap-2">
+            <div class="modal-credenciales-icono">
+              <i class="bi bi-calendar2-week-fill"></i>
+            </div>
+            <div>
+              <h5 class="modal-credenciales-titulo mb-0">
+                Corregir Días y Viáticos (Cometido N°{{ filaEditandoViaticos.numero_fila_excel - 2 }})
+              </h5>
+              <span class="modal-credenciales-subtitulo">
+                RUT: {{ formatearRut(filaEditandoViaticos.rut) }} · Fechas: {{ filaEditandoViaticos.fechainicio }} → {{ filaEditandoViaticos.fechatermino }}
+              </span>
+            </div>
+          </div>
+          <button type="button" class="btn-cerrar-modal" @click="cerrarModalViaticos">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+
+        <form @submit.prevent="guardarCorreccionViaticos" class="modal-credenciales-body">
+          <!-- Aviso de bloqueo cuando la fecha no es válida -->
+          <div v-if="!fechasViaticosValidas" class="viaticos-bloqueo-fechas mb-3">
+            <div class="d-flex align-items-start gap-2">
+              <i class="bi bi-lock-fill fs-5 text-warning mt-1"></i>
+              <div class="flex-grow-1">
+                <div class="fw-bold mb-1">Primero debes corregir las fechas del cometido</div>
+                <div class="small mb-2">
+                  Las fechas actuales (<strong>{{ filaEditandoViaticos.fechainicio || '—' }} → {{ filaEditandoViaticos.fechatermino || '—' }}</strong>) no son válidas, por lo que esta corrección está bloqueada hasta definir el rango correcto.
+                </div>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-warning fw-semibold"
+                  @click="irACorregirFechasDesdeViaticos"
+                >
+                  <i class="bi bi-calendar-range me-1"></i>Corregir Fechas ahora
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div :class="{ 'viaticos-seccion-bloqueada': !fechasViaticosValidas }">
+            <!-- 1. Selección de días de salida -->
+            <div class="mb-3">
+              <div class="d-flex align-items-center justify-content-between mb-2">
+                <label class="form-label modal-credenciales-label mb-0">
+                  1. Días de salida ({{ editDiasSeleccionados.length }} seleccionado{{ editDiasSeleccionados.length === 1 ? '' : 's' }})
+                </label>
+                <button
+                  type="button"
+                  class="btn-atajo-viaticos"
+                  :disabled="!fechasViaticosValidas"
+                  @click="deducirDiasDesdeFechas"
+                  title="Marcar automáticamente los días comprendidos entre Fecha Inicio y Fecha Término"
+                >
+                  <i class="bi bi-magic me-1"></i>Marcar según fechas
+                </button>
+              </div>
+              <div class="dias-selector-grid">
+                <button
+                  v-for="dia in DIAS_SEMANA_OPCIONES"
+                  :key="dia.id"
+                  type="button"
+                  class="dia-toggle-btn"
+                  :class="{
+                    'dia-toggle-btn--activo': editDiasSeleccionados.includes(dia.id),
+                    'dia-toggle-btn--bloqueado': !fechasViaticosValidas || (diasEsperadosPorFecha.length > 0 && !diasEsperadosPorFecha.includes(dia.id))
+                  }"
+                  :disabled="!fechasViaticosValidas || (diasEsperadosPorFecha.length > 0 && !diasEsperadosPorFecha.includes(dia.id))"
+                  @click="toggleDiaSeleccionado(dia.id)"
+                >
+                  <span class="dia-toggle-corto">{{ dia.corto }}</span>
+                  <span class="dia-toggle-largo">{{ dia.label }}</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- 2. Cantidad de días por porcentaje -->
+            <div class="mb-3">
+              <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-1">
+                <label class="form-label modal-credenciales-label mb-0">
+                  2. Cantidad de días por porcentaje
+                </label>
+                <div v-if="editDiasSeleccionados.length > 0" class="d-flex gap-1">
+                  <button
+                    type="button"
+                    class="btn-atajo-viaticos"
+                    :disabled="!fechasViaticosValidas"
+                    @click="igualarPorcentajes('40')"
+                  >
+                    Todo al 40% ({{ editDiasSeleccionados.length }}d)
+                  </button>
+                  <button
+                    v-if="editDiasSeleccionados.length >= 2"
+                    type="button"
+                    class="btn-atajo-viaticos"
+                    :disabled="!fechasViaticosValidas"
+                    @click="igualarPorcentajes('100_40')"
+                  >
+                    {{ editDiasSeleccionados.length - 1 }} al 100% + 1 al 40%
+                  </button>
+                </div>
+              </div>
+
+              <div class="porcentajes-grid">
+                <div v-for="item in PORCENTAJES_VIATICOS" :key="item.campo" class="porcentaje-item">
+                  <label class="porcentaje-label">{{ item.label }}</label>
+                  <input
+                    v-model.number="editPorcentajes[item.campo]"
+                    type="number"
+                    min="0"
+                    max="31"
+                    step="1"
+                    :disabled="!fechasViaticosValidas"
+                    class="form-control modal-input text-center fw-bold"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <!-- Indicador en vivo de coherencia -->
+            <div
+              v-if="fechasViaticosValidas"
+              class="viaticos-balance-box"
+              :class="viaticosEditCoinciden ? 'viaticos-balance-box--ok' : 'viaticos-balance-box--error'"
+            >
+              <div>
+                <i :class="viaticosEditCoinciden ? 'bi bi-check-circle-fill me-2' : 'bi bi-exclamation-triangle-fill me-2'"></i>
+                <span v-if="viaticosEditCoinciden">
+                  <strong>Coherencia válida:</strong> Los {{ editDiasSeleccionados.length }} día(s) coinciden con las fechas ({{ diasEsperadosTexto }}) y los porcentajes suman {{ sumaEditPorcentajes }}.
+                </span>
+                <span v-else-if="!diasCoincidenConFecha">
+                  <strong>Días no coinciden con las fechas:</strong> Según las fechas del cometido corresponden <strong>{{ diasEsperadosPorFecha.length }} día(s) ({{ diasEsperadosTexto }})</strong>. Presiona <em>"Marcar según fechas"</em>.
+                </span>
+                <span v-else>
+                  <strong>Porcentajes no coinciden:</strong> Corresponden <strong>{{ editDiasSeleccionados.length }}</strong> día(s) según las fechas, pero los porcentajes suman <strong>{{ sumaEditPorcentajes }}</strong>.
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-credenciales-footer mt-4">
+            <button type="button" class="btn btn-outline-secondary btn-modal-cancelar" @click="cerrarModalViaticos">
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              class="btn btn-primary btn-modal-confirmar"
+              :disabled="!viaticosEditCoinciden"
+            >
+              <i class="bi bi-check2-circle me-1"></i>
+              Aplicar Corrección
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════ -->
+    <!-- MODAL CORRECCIÓN DE FECHAS                             -->
+    <!-- ══════════════════════════════════════════════════════ -->
+    <div
+      v-if="filaEditandoFechas"
+      class="modal-credenciales-backdrop"
+      @click.self="cerrarModalFechas"
+    >
+      <div class="modal-credenciales-card">
+        <div class="modal-credenciales-header">
+          <div class="d-flex align-items-center gap-2">
+            <div class="modal-credenciales-icono">
+              <i class="bi bi-calendar-range-fill"></i>
+            </div>
+            <div>
+              <h5 class="modal-credenciales-titulo mb-0">
+                Corregir Fechas (Cometido N°{{ filaEditandoFechas.numero_fila_excel - 2 }})
+              </h5>
+              <span class="modal-credenciales-subtitulo">Formato requerido: DD/MM/AAAA</span>
+            </div>
+          </div>
+          <button type="button" class="btn-cerrar-modal" @click="cerrarModalFechas">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+
+        <form @submit.prevent="guardarCorreccionFechas" class="modal-credenciales-body">
+          <div class="d-flex justify-content-end mb-2">
+            <button type="button" class="btn-atajo-viaticos" @click="intercambiarFechasModal">
+              <i class="bi bi-arrow-left-right me-1"></i>Intercambiar Inicio ↔ Término
+            </button>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label modal-credenciales-label">Fecha de Inicio (DD/MM/AAAA)</label>
+            <input
+              v-model="editFechaInicio"
+              type="text"
+              class="form-control modal-input"
+              placeholder="Ej: 05/10/2026"
+            />
+          </div>
+
+          <div class="mb-2">
+            <label class="form-label modal-credenciales-label">Fecha de Término (DD/MM/AAAA)</label>
+            <input
+              v-model="editFechaTermino"
+              type="text"
+              class="form-control modal-input"
+              placeholder="Ej: 09/10/2026"
+            />
+          </div>
+
+          <div v-if="errorModalFechas" class="modal-credenciales-error mt-2">
+            <i class="bi bi-exclamation-circle-fill me-1"></i>
+            {{ errorModalFechas }}
+          </div>
+
+          <div class="modal-credenciales-footer mt-4">
+            <button type="button" class="btn btn-outline-secondary btn-modal-cancelar" @click="cerrarModalFechas">
+              Cancelar
+            </button>
+            <button type="submit" class="btn btn-primary btn-modal-confirmar">
+              <i class="bi bi-check2-circle me-1"></i>
+              Aplicar Corrección
+            </button>
+          </div>
+        </form>
       </div>
     </div>
 
@@ -3374,7 +4057,23 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
   font-size: 13px;
   font-weight: 600;
   color: #334155;
-  margin-bottom: 6px;
+  margin-bottom: 5px;
+}
+
+.credenciales-seccion {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.credenciales-seccion-titulo {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #0284c7;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 8px;
 }
 
 .modal-input-addon {
@@ -3447,5 +4146,133 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
   font-size: 13.5px;
   gap: 8px;
   padding: 4px 0;
+}
+
+.modal-viaticos-card {
+  max-width: 540px;
+}
+
+.dias-selector-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+
+.dia-toggle-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 4px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.dia-toggle-btn:hover {
+  border-color: #94a3b8;
+  background: #f1f5f9;
+}
+
+.dia-toggle-btn--activo {
+  background: #0284c7 !important;
+  border-color: #0284c7 !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 8px rgba(2, 132, 199, 0.3);
+}
+
+.dia-toggle-btn--bloqueado {
+  opacity: 0.38;
+  cursor: not-allowed;
+  background: #f1f5f9;
+}
+
+.dia-toggle-corto {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.dia-toggle-largo {
+  font-size: 10px;
+  opacity: 0.85;
+}
+
+.porcentajes-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.porcentaje-item {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.porcentaje-label {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #475569;
+  margin-bottom: 4px;
+}
+
+.btn-atajo-viaticos {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-atajo-viaticos:hover {
+  background: #dbeafe;
+  border-color: #93c5fd;
+}
+
+.viaticos-balance-box {
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.viaticos-balance-box--ok {
+  background-color: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #065f46;
+}
+
+.viaticos-balance-box--error {
+  background-color: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+
+.viaticos-bloqueo-fechas {
+  background-color: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+  padding: 12px 14px;
+  border-radius: 10px;
+}
+
+.viaticos-seccion-bloqueada {
+  opacity: 0.45;
+  pointer-events: none;
+  user-select: none;
+}
+
+.btn-atajo-viaticos:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

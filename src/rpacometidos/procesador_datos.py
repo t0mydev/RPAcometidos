@@ -1,6 +1,6 @@
 import pandas as pd
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from rapidfuzz import process, fuzz
 from pathlib import Path
 
@@ -146,6 +146,29 @@ def contar_dias_salida(valor):
     except ValueError:
         pass
     return len([d for d in s.split(',') if d.strip()])
+
+
+DIAS_SEMANA_ORDEN = ["LUNES", "MARTES", "MIERCOLES", "JUEVES", "VIERNES", "SABADO", "DOMINGO"]
+
+def _normalizar_dia_nombre(d):
+    return (
+        str(d or "").strip().upper()
+        .replace("Á", "A").replace("É", "E").replace("Í", "I")
+        .replace("Ó", "O").replace("Ú", "U")
+    )
+
+def obtener_dias_semana_rango(d_ini, d_ter):
+    """Retorna la lista ordenada de días de la semana comprendidos entre d_ini y d_ter."""
+    if not d_ini or not d_ter or d_ini > d_ter:
+        return []
+    dias_set = set()
+    curr = d_ini
+    guard = 0
+    while curr <= d_ter and guard < 31:
+        dias_set.add(DIAS_SEMANA_ORDEN[curr.weekday()])
+        curr += timedelta(days=1)
+        guard += 1
+    return [d for d in DIAS_SEMANA_ORDEN if d in dias_set]
 
 def sumar_viaticos(datos):
     """Suma los porcentajes de viáticos de la fila."""
@@ -297,9 +320,26 @@ def validar_registro(datos_entrantes):
                 if mejor_coincidencia and mejor_coincidencia[1] >= 60:
                     resultados_validacion['sugerencia_correccion_sigla'] = mejor_coincidencia[0]
 
-    # 3. Validación de coherencia de viáticos (Días de salida vs suma porcentajes)
+    # 3. Validación de coherencia de viáticos (Fechas vs Días de salida vs suma porcentajes)
     total_dias = contar_dias_salida(datos_entrantes.get('dias_salida'))
     suma_porc = sumar_viaticos(datos_entrantes)
+    d_ini = parsear_fecha(datos_entrantes.get('fechainicio'))
+    d_ter = parsear_fecha(datos_entrantes.get('fechatermino'))
+
+    if d_ini and d_ter and d_ini <= d_ter:
+        dias_esperados = obtener_dias_semana_rango(d_ini, d_ter)
+        dias_ingresados = [
+            _normalizar_dia_nombre(d)
+            for d in str(datos_entrantes.get('dias_salida') or '').split(',')
+            if _normalizar_dia_nombre(d) in DIAS_SEMANA_ORDEN
+        ]
+        dias_ingresados_ordenados = [d for d in DIAS_SEMANA_ORDEN if d in set(dias_ingresados)]
+        if dias_esperados and dias_ingresados_ordenados != dias_esperados:
+            resultados_validacion['viaticos_validos'] = False
+            esperados_txt = ", ".join(d.capitalize() for d in dias_esperados)
+            msg_dias_fecha = f"Los días de salida no coinciden con el rango de fechas (según fechas corresponde: {esperados_txt})."
+            resultados_validacion['errores'].append(msg_dias_fecha)
+            errores_por_grupo['viaticos'].append(msg_dias_fecha)
 
     if total_dias > 0 and abs(total_dias - suma_porc) > 0.01:
         resultados_validacion['viaticos_validos'] = False

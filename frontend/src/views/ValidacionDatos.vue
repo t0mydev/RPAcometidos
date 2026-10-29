@@ -228,8 +228,9 @@ const tieneSugerencias = computed(() =>
     if (!f.sigla_valida && f.sugerencia_correccion_sigla) return true
     const dIni = parsearFechaDMY(f.fechainicio)
     const dTer = parsearFechaDMY(f.fechatermino)
-    if (dIni && dTer && dIni > dTer) return true
-    if (!String(f.dias_salida || '').trim() && dIni && dTer && dIni <= dTer) return true
+    const mismoMes = Boolean(dIni && dTer && dIni.getMonth() === dTer.getMonth() && dIni.getFullYear() === dTer.getFullYear())
+    if (dIni && dTer && mismoMes && dIni > dTer) return true
+    if (!String(f.dias_salida || '').trim() && dIni && dTer && mismoMes && dIni <= dTer) return true
     return false
   })
 )
@@ -1051,10 +1052,11 @@ function aplicarTodasLasSugerencias() {
       f.errores = (f.errores || []).filter(e => !e.toLowerCase().includes('sigla'))
       modificada = true
     }
-    // Auto-intercambiar fechas si inicio > término
+    // Auto-intercambiar fechas si inicio > término y pertenecen al mismo mes
     const dIni = parsearFechaDMY(f.fechainicio)
     const dTer = parsearFechaDMY(f.fechatermino)
-    if (dIni && dTer && dIni > dTer) {
+    const mismoMes = Boolean(dIni && dTer && dIni.getMonth() === dTer.getMonth() && dIni.getFullYear() === dTer.getFullYear())
+    if (dIni && dTer && mismoMes && dIni > dTer) {
       const tmp = f.fechainicio
       f.fechainicio = f.fechatermino
       f.fechatermino = tmp
@@ -1069,7 +1071,8 @@ function aplicarTodasLasSugerencias() {
     // Deducir días de salida si estaba vacío y las fechas son válidas
     const dIniOk = parsearFechaDMY(f.fechainicio)
     const dTerOk = parsearFechaDMY(f.fechatermino)
-    if (!String(f.dias_salida || '').trim() && dIniOk && dTerOk && dIniOk <= dTerOk) {
+    const mismoMesOk = Boolean(dIniOk && dTerOk && dIniOk.getMonth() === dTerOk.getMonth() && dIniOk.getFullYear() === dTerOk.getFullYear())
+    if (!String(f.dias_salida || '').trim() && dIniOk && dTerOk && mismoMesOk && dIniOk <= dTerOk) {
       const diasCalculados = calcularDiasSemanaEntreFechas(dIniOk, dTerOk)
       if (diasCalculados.length > 0) {
         f.dias_salida = diasCalculados.join(', ')
@@ -1225,11 +1228,15 @@ function cerrarModalViaticos() {
   filaEditandoViaticos.value = null
 }
 
+function fechasMismoMes(dIni, dTer) {
+  return Boolean(dIni && dTer && dIni.getMonth() === dTer.getMonth() && dIni.getFullYear() === dTer.getFullYear())
+}
+
 function fechasDeFilaValidas(fila) {
   if (!fila || fila.fechas_validas === false) return false
   const dIni = parsearFechaDMY(fila.fechainicio)
   const dTer = parsearFechaDMY(fila.fechatermino)
-  return Boolean(dIni && dTer && dIni <= dTer)
+  return Boolean(dIni && dTer && fechasMismoMes(dIni, dTer) && dIni <= dTer)
 }
 
 const fechasViaticosValidas = computed(() => {
@@ -1246,7 +1253,7 @@ function obtenerDiasEsperadosDeFila(fila) {
   if (!fila) return []
   const dIni = parsearFechaDMY(fila.fechainicio)
   const dTer = parsearFechaDMY(fila.fechatermino)
-  if (!dIni || !dTer || dIni > dTer) return []
+  if (!dIni || !dTer || !fechasMismoMes(dIni, dTer) || dIni > dTer) return []
   return calcularDiasSemanaEntreFechas(dIni, dTer)
 }
 
@@ -1320,7 +1327,7 @@ const viaticosEditCoinciden = computed(() => {
 function revalidarAdminFila(fila) {
   const dIni = parsearFechaDMY(fila.fechainicio)
   const dTer = parsearFechaDMY(fila.fechatermino)
-  const fechasOk = Boolean(dIni && dTer && dIni <= dTer)
+  const fechasOk = Boolean(dIni && dTer && fechasMismoMes(dIni, dTer) && dIni <= dTer)
   fila.fechas_validas = fechasOk
   const obligatoriosOk = Boolean(
     String(fila.fechainicio || '').trim() &&
@@ -1377,7 +1384,13 @@ function cerrarModalFechas() {
   errorModalFechas.value = ''
 }
 
+const dIniModal = computed(() => parsearFechaDMY(editFechaInicio.value))
+const dTerModal = computed(() => parsearFechaDMY(editFechaTermino.value))
+const mesesModalCoinciden = computed(() => fechasMismoMes(dIniModal.value, dTerModal.value))
+const fechasModalValidas = computed(() => Boolean(dIniModal.value && dTerModal.value && mesesModalCoinciden.value && dIniModal.value <= dTerModal.value))
+
 function intercambiarFechasModal() {
+  if (!mesesModalCoinciden.value) return
   const tmp = editFechaInicio.value
   editFechaInicio.value = editFechaTermino.value
   editFechaTermino.value = tmp
@@ -1429,6 +1442,10 @@ function guardarCorreccionFechas() {
   const dTer = parsearFechaDMY(editFechaTermino.value)
   if (!dIni || !dTer) {
     errorModalFechas.value = 'Ambas fechas deben tener formato válido DD/MM/AAAA.'
+    return
+  }
+  if (!fechasMismoMes(dIni, dTer)) {
+    errorModalFechas.value = 'Las fechas de inicio y término deben pertenecer al mismo mes.'
     return
   }
   if (dIni > dTer) {
@@ -1852,7 +1869,7 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
               >
                 <!-- # Cometido -->
                 <td class="col-n">
-                  <span class="badge-fila">N°{{ fila.numero_fila_excel - 2 }}</span>
+                  <span class="badge-fila">N°{{ fila.numero_cometido || (idx + 1) }}</span>
                 </td>
 
                 <!-- RUT -->
@@ -2314,7 +2331,7 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
             </div>
             <div>
               <h5 class="modal-credenciales-titulo mb-0">
-                Corregir Días y Viáticos (Cometido N°{{ filaEditandoViaticos.numero_fila_excel - 2 }})
+                Corregir Días y Viáticos (Cometido N°{{ filaEditandoViaticos.numero_cometido || (filas.indexOf(filaEditandoViaticos) + 1) }})
               </h5>
               <span class="modal-credenciales-subtitulo">
                 RUT: {{ formatearRut(filaEditandoViaticos.rut) }} · Fechas: {{ filaEditandoViaticos.fechainicio }} → {{ filaEditandoViaticos.fechatermino }}
@@ -2480,7 +2497,7 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
             </div>
             <div>
               <h5 class="modal-credenciales-titulo mb-0">
-                Corregir Fechas (Cometido N°{{ filaEditandoFechas.numero_fila_excel - 2 }})
+                Corregir Fechas (Cometido N°{{ filaEditandoFechas.numero_cometido || (filas.indexOf(filaEditandoFechas) + 1) }})
               </h5>
               <span class="modal-credenciales-subtitulo">Formato requerido: DD/MM/AAAA</span>
             </div>
@@ -2492,7 +2509,13 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
 
         <form @submit.prevent="guardarCorreccionFechas" class="modal-credenciales-body">
           <div class="d-flex justify-content-end mb-2">
-            <button type="button" class="btn-atajo-viaticos" @click="intercambiarFechasModal">
+            <button
+              type="button"
+              class="btn-atajo-viaticos"
+              :disabled="!mesesModalCoinciden"
+              :title="mesesModalCoinciden ? 'Intercambiar fecha de inicio y fecha de término' : 'No se puede intercambiar si las fechas pertenecen a distinto mes'"
+              @click="intercambiarFechasModal"
+            >
               <i class="bi bi-arrow-left-right me-1"></i>Intercambiar Inicio ↔ Término
             </button>
           </div>
@@ -2507,7 +2530,7 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
             />
           </div>
 
-          <div class="mb-2">
+          <div class="mb-3">
             <label class="form-label modal-credenciales-label">Fecha de Término (DD/MM/AAAA)</label>
             <input
               v-model="editFechaTermino"
@@ -2515,6 +2538,28 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
               class="form-control modal-input"
               placeholder="Ej: 09/10/2026"
             />
+          </div>
+
+          <!-- Diagnóstico en vivo del rango de fechas -->
+          <div
+            class="viaticos-balance-box"
+            :class="fechasModalValidas ? 'viaticos-balance-box--ok' : 'viaticos-balance-box--error'"
+          >
+            <div>
+              <i :class="fechasModalValidas ? 'bi bi-check-circle-fill me-2' : 'bi bi-exclamation-triangle-fill me-2'"></i>
+              <span v-if="!dIniModal || !dTerModal">
+                <strong>Formato inválido:</strong> Ambas fechas deben tener un formato válido <strong>DD/MM/AAAA</strong>.
+              </span>
+              <span v-else-if="!mesesModalCoinciden">
+                <strong>Distinto mes detectado:</strong> La fecha de inicio (mes <strong>{{ String(dIniModal.getMonth() + 1).padStart(2, '0') }}/{{ dIniModal.getFullYear() }}</strong>) y la de término (mes <strong>{{ String(dTerModal.getMonth() + 1).padStart(2, '0') }}/{{ dTerModal.getFullYear() }}</strong>) no coinciden. Deben pertenecer al mismo mes (el botón de intercambiar está bloqueado).
+              </span>
+              <span v-else-if="dIniModal > dTerModal">
+                <strong>Fechas invertidas (mismo mes):</strong> La fecha de inicio es posterior a la de término. Puedes usar <em>"Intercambiar Inicio ↔ Término"</em>.
+              </span>
+              <span v-else>
+                <strong>Fechas válidas:</strong> El rango <strong>{{ editFechaInicio.trim() }} → {{ editFechaTermino.trim() }}</strong> pertenece al mismo mes y está en orden correcto.
+              </span>
+            </div>
           </div>
 
           <div v-if="errorModalFechas" class="modal-credenciales-error mt-2">
@@ -2526,7 +2571,7 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
             <button type="button" class="btn btn-outline-secondary btn-modal-cancelar" @click="cerrarModalFechas">
               Cancelar
             </button>
-            <button type="submit" class="btn btn-primary btn-modal-confirmar">
+            <button type="submit" class="btn btn-primary btn-modal-confirmar" :disabled="!fechasModalValidas">
               <i class="bi bi-check2-circle me-1"></i>
               Aplicar Corrección
             </button>

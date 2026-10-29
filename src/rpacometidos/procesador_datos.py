@@ -326,7 +326,7 @@ def validar_registro(datos_entrantes):
     d_ini = parsear_fecha(datos_entrantes.get('fechainicio'))
     d_ter = parsear_fecha(datos_entrantes.get('fechatermino'))
 
-    if d_ini and d_ter and d_ini <= d_ter:
+    if d_ini and d_ter and d_ini <= d_ter and d_ini.month == d_ter.month and d_ini.year == d_ter.year:
         dias_esperados = obtener_dias_semana_rango(d_ini, d_ter)
         dias_ingresados = [
             _normalizar_dia_nombre(d)
@@ -368,7 +368,7 @@ def validar_registro(datos_entrantes):
                 resultados_validacion['errores'].append(msg_req)
                 errores_por_grupo['admin'].append(msg_req)
 
-    # Coherencia cronológica de fechas (inicio <= término)
+    # Coherencia cronológica de fechas (inicio <= término y mismo mes)
     d_ini = parsear_fecha(datos_entrantes.get('fechainicio'))
     d_ter = parsear_fecha(datos_entrantes.get('fechatermino'))
 
@@ -386,7 +386,13 @@ def validar_registro(datos_entrantes):
         resultados_validacion['errores'].append(msg_f)
         errores_por_grupo['admin'].append(msg_f)
 
-    if d_ini and d_ter and d_ini > d_ter:
+    if d_ini and d_ter and (d_ini.month != d_ter.month or d_ini.year != d_ter.year):
+        resultados_validacion['fechas_validas'] = False
+        resultados_validacion['admin_valido'] = False
+        msg_f = f"Las fechas de inicio ({datos_entrantes.get('fechainicio')}) y término ({datos_entrantes.get('fechatermino')}) deben pertenecer al mismo mes."
+        resultados_validacion['errores'].append(msg_f)
+        errores_por_grupo['admin'].append(msg_f)
+    elif d_ini and d_ter and d_ini > d_ter:
         resultados_validacion['fechas_validas'] = False
         resultados_validacion['admin_valido'] = False
         msg_f = f"La fecha de inicio ({datos_entrantes.get('fechainicio')}) es posterior a la fecha de término ({datos_entrantes.get('fechatermino')})."

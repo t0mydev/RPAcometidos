@@ -13,6 +13,44 @@ from rpacometidos.robots.resiliencia import (
 )
 from rpacometidos.procesador_datos import normalizar_rut
 
+def _verificar_modal_error_calendario(pagina, portal, paso_stepper):
+    """
+    Detecta si apareció el modal oscuro de error al seleccionar días en el calendario
+    (ej: 'Ya existe un cometido N° ... para esa fecha seleccionada...').
+    Si está visible, extrae literalmente el texto del modal-body, lo cierra y lanza AccionError.
+    """
+    modal_error = pagina.locator('.modal-content[style*="rgba"], #mensajeModal .modal-content').first
+    try:
+        if modal_error.is_visible():
+            cuerpo = modal_error.locator('.modal-body').first
+            texto_error = ""
+            if cuerpo.is_visible():
+                texto_error = " ".join(cuerpo.inner_text().split()).strip()
+            if not texto_error:
+                texto_error = " ".join(modal_error.inner_text().split()).strip()
+                if texto_error.endswith("Cerrar"):
+                    texto_error = texto_error[:-6].strip()
+
+            btn_cerrar = modal_error.locator('button[data-bs-dismiss="modal"], button:has-text("Cerrar")').first
+            try:
+                if btn_cerrar.is_visible():
+                    btn_cerrar.click(timeout=2000)
+            except Exception:
+                pass
+
+            raise AccionError(
+                portal=portal,
+                paso_stepper=paso_stepper,
+                accion="Seleccionando días del cometido",
+                mensaje=texto_error or "Error al seleccionar los días del cometido en Portal Personal.",
+                selector=".modal-content"
+            )
+    except AccionError:
+        raise
+    except Exception:
+        pass
+
+
 def login_cometidos(pagina, usuario, clave):
     """
     Inicia sesión en el Portal Personal MOP de forma resiliente.
@@ -184,6 +222,12 @@ def procesar_un_cometido(pagina, registro, fila=1, total_registros=1):
     esperar_overlays(pagina)
     ctx.hacer_clic(pagina.get_by_title("Seleccionar TD5").first, "Seleccionando ítem TD5")
 
+    try:
+        pagina.locator('#cien1').clear()
+        pagina.locator('#cuarenta1').clear()
+    except Exception:
+        pass
+
     # 13. Elegir días de la semana en el calendario
     ctx.hacer_clic(pagina.locator('#btnCalendarioViatico'), "Abriendo calendario de viáticos")
     pagina.locator('#resultado_calendario tr').first.wait_for(state="visible", timeout=8000)
@@ -197,12 +241,19 @@ def procesar_un_cometido(pagina, registro, fila=1, total_registros=1):
         ]
         filas_calendario = pagina.locator('#resultado_calendario tr')
         for i in range(filas_calendario.count()):
+            _verificar_modal_error_calendario(pagina, portal, paso_stepper)
             fila_cal = filas_calendario.nth(i)
             nombre_dia = fila_cal.locator('td').nth(2).inner_text().strip().lower().replace('á', 'a').replace('é', 'e').replace('í', 'i').replace('ó', 'o').replace('ú', 'u')
             if nombre_dia in dias_solicitados:
                 chk = fila_cal.locator('input[type="checkbox"]')
-                if not chk.is_checked():
-                    chk.check()
+                try:
+                    if not chk.is_checked():
+                        chk.check(timeout=4000)
+                        pagina.wait_for_timeout(400)
+                except Exception:
+                    _verificar_modal_error_calendario(pagina, portal, paso_stepper)
+                    raise
+                _verificar_modal_error_calendario(pagina, portal, paso_stepper)
 
     ctx.hacer_clic(pagina.locator('#btnGrabaCalendario'), "Grabando calendario de viáticos")
     esperar_overlays(pagina)
@@ -217,11 +268,6 @@ def procesar_un_cometido(pagina, registro, fila=1, total_registros=1):
         'dias_35':  '#treinta1'
     }
 
-    try:
-        pagina.locator('#cien1').clear()
-        pagina.locator('#cuarenta1').clear()
-    except Exception:
-        pass
 
     for llave_json, id_selector in mapeo_porcentajes.items():
         valor = str(registro.get(llave_json, '')).strip()

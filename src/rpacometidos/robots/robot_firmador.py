@@ -1,5 +1,6 @@
 import time
 import os
+import re
 from rpacometidos.robots.base import guardar_progreso
 from rpacometidos.robots.resiliencia import (
     ContextoRobot,
@@ -194,6 +195,21 @@ def procesar_un_firmador(pagina, registro, fila=1, total_registros=1):
         esperar_oculto=modal_confirm
     )
     pagina.wait_for_load_state('networkidle')
+
+    # Captura defensiva del N° de Expediente generado en el popup de éxito
+    try:
+        aviso_exp = pagina.get_by_text("Expediente NRO", exact=False).first
+        aviso_exp.wait_for(state="visible", timeout=6000)
+        texto_exp = aviso_exp.inner_text(timeout=1500)
+        m_exp = re.search(r"#\s*(\d+)|NRO\.?\s*#?\s*(\d+)", texto_exp, re.IGNORECASE)
+        if m_exp:
+            registro["numero_expediente_firmador"] = m_exp.group(1) or m_exp.group(2)
+        btn_aceptar = pagina.locator('button:visible:has-text("Aceptar")').first
+        if btn_aceptar.is_visible():
+            btn_aceptar.click(timeout=2000)
+    except Exception:
+        pass
+
     esperar_overlays(pagina)
 
     guardar_progreso(

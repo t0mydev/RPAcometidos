@@ -1,5 +1,9 @@
 from flask import Flask, render_template, request, jsonify, send_file
 from rpacometidos.lector_excel import procesar_planilla_completa
+from rpacometidos.historial_db import (
+    obtener_historial_ejecuciones,
+    obtener_ejecucion_por_id,
+)
 from rpacometidos.procesador_datos import (
     obtener_datos_conocidos,
     agregar_dato_conocido,
@@ -103,14 +107,60 @@ def descargar_excel_corregido():
         ]
         col_map = {campo: buscar_columna(encabezados, header) for campo, header in COLUMNAS}
 
+        # Carga resultados de la última ejecución si existen para anexar folios (SSD, Cometido, Expediente)
+        resultados_por_indice = {}
+        path_datos_auto = BASE_DIR / "datos_automatizacion.json"
+        if path_datos_auto.exists():
+            try:
+                with open(path_datos_auto, "r", encoding="utf-8") as f:
+                    lista_auto = json.load(f)
+                    for idx, item_auto in enumerate(lista_auto):
+                        resultados_por_indice[idx] = item_auto
+            except Exception:
+                pass
+
+        # Determina fila de encabezados (fila 2 o fila 1) y columnas adicionales para folios de auditoría
+        fila_header = 2 if any(celda.value for celda in hoja[2]) else 1
+        max_col_base = hoja.max_column
+
+        HEADERS_AUDITORIA = [
+            ("numero_ssd",                 "N° PROCESO SSD"),
+            ("numero_cometido_personal",   "N° COMETIDO PERSONAL"),
+            ("numero_expediente_firmador", "N° EXPEDIENTE FIRMADOR"),
+            ("estado_proceso",             "ESTADO EJECUCIÓN RPA"),
+            ("observacion_error",          "OBSERVACIÓN / ERROR"),
+        ]
+        col_auditoria_map = {}
+        if resultados_por_indice:
+            for offset, (clave_aud, titulo_col) in enumerate(HEADERS_AUDITORIA, start=1):
+                col_idx = max_col_base + offset
+                hoja.cell(row=fila_header, column=col_idx).value = titulo_col
+                col_auditoria_map[clave_aud] = col_idx
+
         # Modifica los valores
-        for registro in datos_corregidos:
+        for idx, registro in enumerate(datos_corregidos):
             fila_indice = registro.get("numero_fila_excel")
             if not fila_indice:
                 continue
             for campo, col in col_map.items():
                 if col and campo in registro:
                     hoja.cell(row=fila_indice, column=col).value = registro[campo]
+
+            # Si hay resultados de ejecución, escribe los números de proceso y estado
+            if idx in resultados_por_indice and col_auditoria_map:
+                res_auto = resultados_por_indice[idx]
+                err_info = res_auto.get("error") or {}
+                obs_texto = ""
+                if isinstance(err_info, dict) and err_info.get("mensaje"):
+                    portal_err = str(err_info.get("portal") or "").upper()
+                    accion_err = str(err_info.get("accion") or "")
+                    obs_texto = f"[{portal_err} - {accion_err}] {err_info.get('mensaje')}"
+
+                hoja.cell(row=fila_indice, column=col_auditoria_map["numero_ssd"]).value = res_auto.get("numero_ssd", "")
+                hoja.cell(row=fila_indice, column=col_auditoria_map["numero_cometido_personal"]).value = res_auto.get("numero_cometido_personal", "")
+                hoja.cell(row=fila_indice, column=col_auditoria_map["numero_expediente_firmador"]).value = res_auto.get("numero_expediente_firmador", "")
+                hoja.cell(row=fila_indice, column=col_auditoria_map["estado_proceso"]).value = str(res_auto.get("estado_proceso", "")).upper()
+                hoja.cell(row=fila_indice, column=col_auditoria_map["observacion_error"]).value = obs_texto
 
         # Guarda el archivo corregido en un buffer en memoria
         buffer = io.BytesIO()
@@ -147,9 +197,11 @@ def empezar_automatizacion():
         if isinstance(body, dict):
             datos = body.get("filas") or []
             credenciales = body.get("credenciales") or {}
+            nombre_archivo = str(body.get("nombre_archivo") or "planilla_cometidos.xlsx").strip()
         else:
             datos = body
             credenciales = {}
+            nombre_archivo = "planilla_cometidos.xlsx"
 
         usuario_ssd = str(credenciales.get("usuario_ssd") or "").strip()
         clave_ssd = str(credenciales.get("clave_ssd") or "")
@@ -158,12 +210,12 @@ def empezar_automatizacion():
         
         # Le damos formato a los datos para el robot de Playwright
         CAMPOS_SIMPLES = [
-            "rut", "sigla", "fechainicio", "fechatermino", "tipo_movilizacion",
+            "rut", "nombre", "sigla", "fechainicio", "fechatermino", "tipo_movilizacion",
             "personal_trasladado", "fallback_considerando", "lugar_cometido",
             "regiones", "atribucion", "dias_salida",
             "tipo_imputacion_presupuestaria", "nombre_aprobador", "nombre_firmantes"
         ]
-        CAMPOS_NUMERICOS = ["dias_100", "dias_70", "dias_60", "dias_50", "dias_40", "dias_35"]
+        CAMPOS_NUMERICOS = ["numero_fila_excel", "dias_100", "dias_70", "dias_60", "dias_50", "dias_40", "dias_35"]
 
         datos_robot = []
         for registro in datos:
@@ -179,6 +231,7 @@ def empezar_automatizacion():
 
         # Inyecta las credenciales exclusivamente en la memoria RAM del subproceso hijo
         env_proceso = os.environ.copy()
+        env_proceso["RPA_NOMBRE_ARCHIVO"] = nombre_archivo
         if usuario_ssd:
             env_proceso["RPA_USUARIO_SSD"] = usuario_ssd
         if clave_ssd:
@@ -275,6 +328,105 @@ def borrar_dato_conocido(rut):
         return jsonify({"status": "error", "mensaje": str(e)}), 404
     except Exception as e:
         return jsonify({"status": "error", "mensaje": f"Error al eliminar conductor: {str(e)}"}), 500
+
+
+# ==============================================================
+# Endpoints de Historial de Ejecuciones (Auditoría / Trazabilidad)
+# ==============================================================
+
+@app.route('/api/historial', methods=['GET'])
+def listar_historial():
+    try:
+        ejecuciones = obtener_historial_ejecuciones(limite=100)
+        return jsonify({"status": "completado", "ejecuciones": ejecuciones}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "mensaje": f"Error al consultar el historial: {str(e)}"}), 500
+
+
+@app.route('/api/historial/<int:ejecucion_id>/excel', methods=['GET'])
+def exportar_historial_excel(ejecucion_id):
+    try:
+        ejecucion = obtener_ejecucion_por_id(ejecucion_id)
+        if not ejecucion:
+            return jsonify({"status": "error", "mensaje": "No se encontró la ejecución solicitada."}), 404
+
+        wb = openpyxl.Workbook()
+        hoja = wb.active
+        hoja.title = f"Ejecución #{ejecucion_id}"
+
+        # Resumen superior de auditoría
+        hoja.append(["REPORTE DE TRAZABILIDAD DE EJECUCIÓN RPA - MOP"])
+        hoja.append([
+            "ID Ejecución", ejecucion["id"],
+            "Fecha Inicio", ejecucion["fecha_inicio"],
+            "Fecha Término", ejecucion["fecha_termino"],
+        ])
+        hoja.append([
+            "Archivo Origen", ejecucion["nombre_archivo"],
+            "Usuario SSD", ejecucion["usuario_ssd"],
+            "Usuario MOP", ejecucion["usuario_mop"],
+        ])
+        hoja.append([
+            "Total Cometidos", ejecucion["total_cometidos"],
+            "Completados", ejecucion["completados"],
+            "Fallidos", ejecucion["fallidos"],
+        ])
+        hoja.append([])
+
+        encabezados = [
+            "N° COMETIDO",
+            "FILA EXCEL",
+            "RUT FUNCIONARIO",
+            "NOMBRE FUNCIONARIO",
+            "SIGLA VEHÍCULO",
+            "FECHA INICIO",
+            "FECHA TÉRMINO",
+            "LUGAR COMETIDO",
+            "N° PROCESO SSD",
+            "N° COMETIDO PERSONAL",
+            "N° EXPEDIENTE FIRMADOR",
+            "ESTADO",
+            "PORTAL FALLO",
+            "ACCIÓN FALLO",
+            "DETALLE / ERROR",
+        ]
+        hoja.append(encabezados)
+
+        for c in ejecucion.get("cometidos", []):
+            hoja.append([
+                c.get("fila_orden", ""),
+                c.get("numero_fila_excel", ""),
+                c.get("rut", ""),
+                c.get("nombre", ""),
+                c.get("sigla", ""),
+                c.get("fechainicio", ""),
+                c.get("fechatermino", ""),
+                c.get("lugar_cometido", ""),
+                c.get("numero_ssd", "") or "—",
+                c.get("numero_cometido", "") or "—",
+                c.get("numero_expediente", "") or "—",
+                str(c.get("estado", "")).upper(),
+                str(c.get("portal_error", "")).upper(),
+                c.get("accion_error", ""),
+                c.get("mensaje_error", ""),
+            ])
+
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+
+        fecha_limpia = str(ejecucion.get("fecha_inicio", "")).replace(":", "").replace(" ", "_").replace("-", "")
+        nombre_descarga = f"auditoria_ejecucion_{ejecucion_id}_{fecha_limpia}.xlsx"
+
+        return send_file(
+            buffer,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=nombre_descarga,
+        )
+    except Exception as e:
+        return jsonify({"status": "error", "mensaje": f"Error al exportar reporte: {str(e)}"}), 500
+
 
 
 if __name__ == '__main__':

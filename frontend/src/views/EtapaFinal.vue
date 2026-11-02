@@ -1,5 +1,8 @@
 <script setup>
 import { ref, computed } from 'vue'
+import { useRouter } from 'vue-router'
+
+const router = useRouter()
 
 const props = defineProps({
   filas: {
@@ -171,6 +174,14 @@ async function descargarExcelCorregido() {
           <span v-if="descargando" class="spinner-border spinner-border-sm me-2"></span>
           <i v-else class="bi bi-file-earmark-arrow-down-fill me-2"></i>
           {{ descargando ? 'Generando archivo...' : 'Descargar Resultados' }}
+        </button>
+
+        <button
+          class="btn btn-outline-primary btn-lg btn-accion"
+          @click="router.push({ name: 'HistorialEjecuciones' })"
+        >
+          <i class="bi bi-clock-history me-2"></i>
+          Ver Historial
         </button>
 
         <button

@@ -68,7 +68,8 @@ def descargar_excel_corregido():
         # Mapea los encabezados para saber las columnas a modificar
         from rpacometidos.lector_excel import (
             buscar_columna,
-            HEADER_RUT, HEADER_SIGLA, HEADER_TIPO_MOVILIZACION,
+            HEADER_RUT, HEADER_FECHA_INICIO, HEADER_FECHA_TERMINO,
+            HEADER_SIGLA, HEADER_TIPO_MOVILIZACION,
             HEADER_LUGAR_COMETIDO, HEADER_REGION_PRINCIPAL, HEADER_REGIONES,
             HEADER_PERSONAL_TRASLADADO, HEADER_NOMBRE_APROBADOR, HEADER_NOMBRE_FIRMANTES,
             HEADER_TIPO_IMPUTACION_PRESUPUESTARIA, HEADER_FALLBACK_CONSIDERANDO,
@@ -79,6 +80,8 @@ def descargar_excel_corregido():
 
         COLUMNAS = [
             ("rut",                          HEADER_RUT),
+            ("fechainicio",                  HEADER_FECHA_INICIO),
+            ("fechatermino",                 HEADER_FECHA_TERMINO),
             ("sigla",                        HEADER_SIGLA),
             ("tipo_movilizacion",            HEADER_TIPO_MOVILIZACION),
             ("lugar_cometido",               HEADER_LUGAR_COMETIDO),
@@ -139,8 +142,19 @@ def empezar_automatizacion():
             except Exception:
                 pass
 
-        # Recupera los registros corregidos desde la vista
-        datos = request.json or []
+        # Recupera los registros corregidos y las credenciales desde la vista
+        body = request.get_json() or []
+        if isinstance(body, dict):
+            datos = body.get("filas") or []
+            credenciales = body.get("credenciales") or {}
+        else:
+            datos = body
+            credenciales = {}
+
+        usuario_ssd = str(credenciales.get("usuario_ssd") or "").strip()
+        clave_ssd = str(credenciales.get("clave_ssd") or "")
+        usuario_mop = str(credenciales.get("usuario") or "").strip()
+        clave_mop = str(credenciales.get("clave") or "")
         
         # Le damos formato a los datos para el robot de Playwright
         CAMPOS_SIMPLES = [
@@ -159,15 +173,26 @@ def empezar_automatizacion():
             dato["accion"] = "aprobado" if dato["rut"] and dato["sigla"] else "pendiente"
             datos_robot.append(dato)
             
-        # Guarda los registros en datos_automatizacion.json
+        # Guarda únicamente los registros en datos_automatizacion.json (sin credenciales en disco)
         with open(path_datos, "w", encoding="utf-8") as f:
             json.dump(datos_robot, f, ensure_ascii=False, indent=4)
+
+        # Inyecta las credenciales exclusivamente en la memoria RAM del subproceso hijo
+        env_proceso = os.environ.copy()
+        if usuario_ssd:
+            env_proceso["RPA_USUARIO_SSD"] = usuario_ssd
+        if clave_ssd:
+            env_proceso["RPA_CLAVE_SSD"] = clave_ssd
+        if usuario_mop:
+            env_proceso["RPA_USUARIO_MOP"] = usuario_mop
+        if clave_mop:
+            env_proceso["RPA_CLAVE_MOP"] = clave_mop
             
         # Ejecuta el simulador o el orquestador según MODO_SIMULACION
         if MODO_SIMULACION:
-            subprocess.Popen([sys.executable, "-m", "rpacometidos.robots.simulador"], cwd=str(BASE_DIR))
+            subprocess.Popen([sys.executable, "-m", "rpacometidos.robots.simulador"], cwd=str(BASE_DIR), env=env_proceso)
         else:
-            subprocess.Popen([sys.executable, "-m", "rpacometidos.robots.orquestador"], cwd=str(BASE_DIR))
+            subprocess.Popen([sys.executable, "-m", "rpacometidos.robots.orquestador"], cwd=str(BASE_DIR), env=env_proceso)
         
         return jsonify({"status": "iniciado", "mensaje": "La automatización se ha iniciado correctamente."}), 200
         
@@ -185,46 +210,13 @@ def progreso_automatizacion():
         except Exception as e:
             return jsonify({"error": str(e)}), 500
     else:
-        return jsonify({"estado": "no_iniciado", "indice": 0}), 200
-
-# ==============================================================
-# Endpoints de Credenciales
-# ==============================================================
-
-# Funcion para crear el archivo .json de credenciales
-@app.route('/api/guardar-credenciales', methods=['POST'])
-def guardar_credenciales():
-    try:
-        # 1. Obtenemos los datos que nos envió Vue
-        datos = request.get_json() or {}
-        
-        # 2. Definimos la ruta del archivo en la raíz del proyecto
-        path_credenciales = BASE_DIR / "credenciales.json"
-        
-        # 3. Guardamos el archivo JSON en el disco
-        with open(path_credenciales, "w", encoding="utf-8") as f:
-            json.dump(datos, f, ensure_ascii=False, indent=4)
-            
-        # 4. Respondemos a Vue que todo salió bien (Código 200 = Éxito)
-        return jsonify({"status": "completado", "mensaje": "Credenciales guardadas correctamente"}), 200
-        
-    except Exception as e:
-        # Si algo falla (ej. permisos de disco), avisamos del error (Código 500 = Error del servidor)
-        return jsonify({"status": "error", "mensaje": f"Error al guardar: {str(e)}"}), 500
-
-# Funcion para obtener el archivo .json de credenciales
-@app.route('/api/obtener-credenciales', methods=['GET'])
-def obtener_credenciales():
-    try:
-        path_credenciales = BASE_DIR / "credenciales.json"
-        if path_credenciales.exists():
-            with open(path_credenciales, "r", encoding="utf-8") as f:
-                datos = json.load(f)
-            return jsonify({"status": "completado", "credenciales": datos}), 200
-        else:
-            return jsonify({"status": "completado", "credenciales": {}}), 200
-    except Exception as e:
-        return jsonify({"status": "error", "mensaje": f"Error al leer credenciales: {str(e)}"}), 500
+        return jsonify({
+            "estado": "no_iniciado",
+            "paso_stepper": 1,
+            "total_cometidos": 0,
+            "detalle": "",
+            "estados_cometidos": []
+        }), 200
 
 # ==============================================================
 # Endpoints de Datos Conocidos (Conductores / Vehículos)

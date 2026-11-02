@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="70 70 460 460" width="100%" height="100%">
+  <!-- ==========================================================================
+       VIATIBOT - VERSIÓN 1: LOGOTIPO OFICIAL VECTORIAL PURO (FLAT PRECISION)
+       Fondo: 100% TRANSPARENTE
+       Engranaje exacto de 10 coronas / dientes simétricos
+       ========================================================================== -->
+  <defs>
+    <!-- Paleta Oficial ViatiBot -->
+    <linearGradient id="vCyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="100%" stop-color="#00F2FE" />
+    </linearGradient>
+
+    <!-- Trazado del Engranaje de 10 Dientes Exacto -->
+    <path id="exact10Gear" d="
+      M 471.9 253.9 
+      L 523.3 272.6 L 523.3 327.4 L 471.9 346.1 
+      L 466.2 363.8 L 496.8 409.1 L 464.6 453.5 L 412.0 438.3 
+      L 396.9 449.3 L 395.1 503.9 L 342.9 520.8 L 309.3 477.8 
+      L 290.7 477.8 L 257.1 520.8 L 204.9 503.9 L 203.1 449.3 
+      L 188.0 438.3 L 135.4 453.5 L 103.2 409.1 L 133.8 363.8 
+      L 128.1 346.1 L 76.7 327.4 L 76.7 272.6 L 128.1 253.9 
+      L 133.8 236.2 L 103.2 190.9 L 135.4 146.5 L 188.0 161.7 
+      L 203.1 150.7 L 204.9 96.1 L 257.1 79.2 L 290.7 122.2 
+      L 309.3 122.2 L 342.9 79.2 L 395.1 96.1 L 396.9 150.7 
+      L 412.0 161.7 L 464.6 146.5 L 496.8 190.9 L 466.2 236.2 Z" />
+
+    <clipPath id="gearClip10">
+      <use href="#exact10Gear" />
+    </clipPath>
+  </defs>
+
+  <!-- 1. BASE DEL ENGRANAJE EN AZUL NOCHE PROFUNDO -->
+  <use href="#exact10Gear" fill="#0B132B" />
+
+  <!-- 2. CONTENIDO INTERNO RECORTADO AL ENGRANAJE -->
+  <g clip-path="url(#gearClip10)">
+    
+    <!-- Línea de Corte Láser Diagonal en Cian Neón -->
+    <line x1="140" y1="520" x2="460" y2="80" stroke="#00F2FE" stroke-width="14" stroke-linecap="round" />
+
+    <!-- Monograma VB al Centro (300, 300) -->
+    <g transform="translate(300, 300) scale(0.92)">
+      
+      <!-- LETRA 'V' EN CIAN NEÓN ELÉCTRICO -->
+      <path d="M -195 -135 L -88 128 L -32 128 L 22 -135 L -28 -135 L -60 62 L -148 -135 Z" fill="url(#vCyanGrad)" />
+
+      <!-- LETRA 'B' EN BLANCO SÓLIDO (VANGUARDISTA) -->
+      <path d="
+        M -20 -78 
+        L 78 -78 
+        C 160 -78 160 -4 112 8 
+        C 180 20 180 124 88 124 
+        L -20 124 
+        L -20 68 
+        L -42 22 
+        L -10 22 
+        Z 
+        M 26 -36 
+        L 68 -36 
+        C 108 -36 108 -4 68 -4 
+        L 26 -4 
+        Z 
+        M 26 46 
+        L 78 46 
+        C 118 46 118 84 78 84 
+        L 26 84 
+        Z" 
+        fill="#FFFFFF" 
+        fill-rule="evenodd" 
+        stroke="#000000" 
+        stroke-width="5" 
+        stroke-linejoin="round" />
+    </g>
+  </g>
+
+  <!-- 3. DELINEADO EXTERIOR FINO DE PRECISIÓN -->
+  <use href="#exact10Gear" fill="none" stroke="#000000" stroke-width="5" stroke-linejoin="round" />
+</svg>

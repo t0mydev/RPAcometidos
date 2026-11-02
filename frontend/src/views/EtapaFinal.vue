@@ -1,8 +1,12 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 
 const props = defineProps({
   filas: {
+    type: Array,
+    default: () => [],
+  },
+  estadosCometidos: {
     type: Array,
     default: () => [],
   },
@@ -13,6 +17,19 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['volver-inicio'])
+
+const totalCometidos = computed(() => props.filas.length || props.estadosCometidos.length)
+const completadosCount = computed(() => {
+  if (!props.estadosCometidos.length) return props.filas.length
+  return props.estadosCometidos.filter(c => c.estado === 'completado').length
+})
+const fallidosCount = computed(() => {
+  return props.estadosCometidos.filter(c => c.estado === 'fallido').length
+})
+const tasaExito = computed(() => {
+  if (totalCometidos.value === 0) return 0
+  return Math.round((completadosCount.value / totalCometidos.value) * 100)
+})
 
 const descargando = ref(false)
 const descargarMensaje = ref('')
@@ -100,12 +117,27 @@ async function descargarExcelCorregido() {
   <div class="etapa3-contenedor">
     <div class="finalizado-card">
       <div class="finalizado-icono-wrapper">
-        <i class="bi bi-check-circle-fill finalizado-icono"></i>
+        <i
+          v-if="fallidosCount === 0"
+          class="bi bi-check-circle-fill finalizado-icono"
+        ></i>
+        <i
+          v-else
+          class="bi bi-exclamation-triangle-fill finalizado-icono"
+          style="color: #d97706;"
+        ></i>
       </div>
 
-      <h2 class="finalizado-titulo">¡Automatización Completada!</h2>
+      <h2 class="finalizado-titulo">
+        {{ fallidosCount === 0 ? '¡Automatización Completada!' : 'Automatización Finalizada con Observaciones' }}
+      </h2>
       <p class="finalizado-descripcion">
-        Todos los cometidos han sido procesados y registrados exitosamente en los portales correspondientes.
+        <template v-if="fallidosCount === 0">
+          Todos los cometidos han sido procesados y registrados exitosamente en los portales correspondientes.
+        </template>
+        <template v-else>
+          Se completaron <strong>{{ completadosCount }} de {{ totalCometidos }}</strong> cometidos exitosamente y <strong>{{ fallidosCount }}</strong> presentó error durante la ejecución.
+        </template>
       </p>
 
       <!-- Tarjeta informativa de resumen -->
@@ -113,14 +145,17 @@ async function descargarExcelCorregido() {
         <div class="kpi-item">
           <i class="bi bi-file-earmark-check-fill text-primary"></i>
           <div class="kpi-texto">
-            <span class="kpi-valor">{{ filas.length }}</span>
-            <span class="kpi-label">Cometidos procesados</span>
+            <span class="kpi-valor">{{ completadosCount }} / {{ totalCometidos }}</span>
+            <span class="kpi-label">Cometidos exitosos</span>
           </div>
         </div>
         <div class="kpi-item">
-          <i class="bi bi-shield-check text-success"></i>
+          <i
+            class="bi bi-shield-check"
+            :class="fallidosCount === 0 ? 'text-success' : 'text-warning'"
+          ></i>
           <div class="kpi-texto">
-            <span class="kpi-valor">100%</span>
+            <span class="kpi-valor">{{ tasaExito }}%</span>
             <span class="kpi-label">Tasa de éxito</span>
           </div>
         </div>

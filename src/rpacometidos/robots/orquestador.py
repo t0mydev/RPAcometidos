@@ -38,8 +38,18 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=400):
         )
         limpiar_pdfs_temporales()  # Limpia PDFs temporales antes de iniciar la automatización
         with sync_playwright() as p:
-            # 1. Abre UNA SOLA instancia de navegador
-            navegador = p.firefox.launch(headless=headless, slow_mo=slow_mo)
+            # 1. Abre UNA SOLA instancia de navegador (prioriza Chrome/Edge del sistema; fallback a Firefox)
+            navegador = None
+            for canal in ("chrome", "msedge"):
+                try:
+                    navegador = p.chromium.launch(channel=canal, headless=headless, slow_mo=slow_mo)
+                    break
+                except Exception:
+                    continue
+
+            if navegador is None:
+                navegador = p.firefox.launch(headless=headless, slow_mo=slow_mo)
+
             contexto = navegador.new_context()
 
             # 2. Crea las pestañas necesarias

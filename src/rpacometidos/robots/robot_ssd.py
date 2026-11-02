@@ -141,6 +141,19 @@ def procesar_un_ssd(pagina, registro, fila=1, total_registros=1):
 
     def manejar_dialogo_ssd(dialog):
         try:
+            texto = dialog.message or ""
+            texto_lower = texto.lower()
+
+            # Si aparece el aviso de N° Interno reutilizado, aceptamos con OK (vía finally)
+            # y retornamos para que el listener capture la siguiente alerta con el N° de proceso real
+            if (
+                "utilizado en otro tipo de documento" in texto_lower
+                or "volver a utilizarlo" in texto_lower
+                or "n°interno" in texto_lower
+                or "n° interno" in texto_lower
+            ):
+                return
+
             for _ in range(3):
                 texto = dialog.message or ""
                 match = re.search(r'\d+', texto)
@@ -194,7 +207,7 @@ def procesar_un_ssd(pagina, registro, fila=1, total_registros=1):
 
     # 6. Grabar documento y capturar número de proceso
     numero_capturado.clear()
-    pagina.once("dialog", manejar_dialogo_ssd)
+    pagina.on("dialog", manejar_dialogo_ssd)
 
     ctx.hacer_clic(
         frm_main.locator('[name="Grabar"]'),
@@ -208,6 +221,10 @@ def procesar_un_ssd(pagina, registro, fila=1, total_registros=1):
         pagina.wait_for_timeout(2000)
 
     pagina.wait_for_load_state('networkidle')
+    try:
+        pagina.remove_listener("dialog", manejar_dialogo_ssd)
+    except Exception:
+        pass
 
     numero_proceso = numero_capturado.get('numero', '')
     if not numero_proceso:

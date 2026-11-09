@@ -75,6 +75,9 @@ async function descargarExcelCorregido() {
 
   formData.append('reporte_corregido', JSON.stringify(payload))
   formData.append('incluir_auditoria', 'true')
+  if (props.estadosCometidos && props.estadosCometidos.length) {
+    formData.append('estados_cometidos', JSON.stringify(props.estadosCometidos))
+  }
 
   try {
     const resp = await fetch('/api/descargar-excel-corregido', {

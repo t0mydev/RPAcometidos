@@ -98,7 +98,12 @@ def descargar_excel_corregido():
             HEADER_ATRIBUCION_ACTUAL, HEADER_DIAS_SALIDA, HEADER_DIAS_100,
             HEADER_DIAS_70, HEADER_DIAS_60, HEADER_DIAS_50, HEADER_DIAS_40, HEADER_DIAS_35
         )
-        encabezados = {celda.value: celda.column for celda in hoja[2] if celda.value} or {celda.value: celda.column for celda in hoja[1] if celda.value}
+        # Fila de encabezados oficial de la plantilla centralizada (Fila 1)
+        fila_header = 1
+        encabezados = {celda.value: celda.column for celda in hoja[1] if celda.value}
+        if not encabezados:
+            encabezados = {celda.value: celda.column for celda in hoja[2] if celda.value}
+            fila_header = 2
 
         COLUMNAS = [
             ("rut",                          HEADER_RUT),
@@ -128,18 +133,30 @@ def descargar_excel_corregido():
         # Solo anexa folios de auditoría si la petición proviene explícitamente de la etapa post-ejecución
         incluir_auditoria = str(request.form.get('incluir_auditoria', '')).lower() in ('true', '1', 'yes')
         resultados_por_indice = {}
-        path_datos_auto = BASE_DIR / "datos_automatizacion.json"
-        if incluir_auditoria and path_datos_auto.exists():
-            try:
-                with open(path_datos_auto, "r", encoding="utf-8") as f:
-                    lista_auto = json.load(f)
-                    for idx, item_auto in enumerate(lista_auto):
-                        resultados_por_indice[idx] = item_auto
-            except Exception:
-                pass
+        if incluir_auditoria:
+            # 1. Prioriza los estados enviados explícitamente por el cliente en esta solicitud
+            estados_form = request.form.get('estados_cometidos')
+            if estados_form:
+                try:
+                    for item_estado in json.loads(estados_form):
+                        idx = item_estado.get('indice')
+                        if idx is not None:
+                            resultados_por_indice[int(idx)] = item_estado
+                except Exception:
+                    pass
 
-        # Determina fila de encabezados (fila 2 o fila 1) y columnas adicionales para folios de auditoría
-        fila_header = 2 if any(celda.value for celda in hoja[2]) else 1
+            # 2. Fallback a datos_automatizacion.json si la petición no incluyó estados en el payload
+            if not resultados_por_indice:
+                path_datos_auto = BASE_DIR / "datos_automatizacion.json"
+                if path_datos_auto.exists():
+                    try:
+                        with open(path_datos_auto, "r", encoding="utf-8") as f:
+                            lista_auto = json.load(f)
+                            for idx, item_auto in enumerate(lista_auto):
+                                resultados_por_indice[idx] = item_auto
+                    except Exception:
+                        pass
+
         max_col_base = hoja.max_column
 
         HEADERS_AUDITORIA = [
@@ -168,7 +185,7 @@ def descargar_excel_corregido():
             # Si hay resultados de ejecución vinculados, escribe los números de proceso y estado
             if idx in resultados_por_indice and col_auditoria_map:
                 res_auto = resultados_por_indice[idx]
-                err_info = res_auto.get("error") or {}
+                err_info = res_auto.get("error") or res_auto.get("ultimo_error") or {}
                 obs_texto = ""
                 if isinstance(err_info, dict) and err_info.get("mensaje"):
                     portal_err = str(err_info.get("portal") or "").upper()
@@ -178,7 +195,7 @@ def descargar_excel_corregido():
                 hoja.cell(row=fila_indice, column=col_auditoria_map["numero_ssd"]).value = sanitizar_celda_excel(res_auto.get("numero_ssd", ""))
                 hoja.cell(row=fila_indice, column=col_auditoria_map["numero_cometido_personal"]).value = sanitizar_celda_excel(res_auto.get("numero_cometido_personal", ""))
                 hoja.cell(row=fila_indice, column=col_auditoria_map["numero_expediente_firmador"]).value = sanitizar_celda_excel(res_auto.get("numero_expediente_firmador", ""))
-                hoja.cell(row=fila_indice, column=col_auditoria_map["estado_proceso"]).value = sanitizar_celda_excel(str(res_auto.get("estado_proceso", "")).upper())
+                hoja.cell(row=fila_indice, column=col_auditoria_map["estado_proceso"]).value = sanitizar_celda_excel(str(res_auto.get("estado_proceso") or res_auto.get("estado", "")).upper())
                 hoja.cell(row=fila_indice, column=col_auditoria_map["observacion_error"]).value = sanitizar_celda_excel(obs_texto)
 
         # Guarda el archivo corregido en un buffer en memoria

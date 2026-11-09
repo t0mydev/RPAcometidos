@@ -49,7 +49,17 @@ const handleProcess = () => {
 
 
     <!-- ─── Botón de cabecera (esquina superior derecha) ─── -->
-    <div class="cuentas-wrapper">
+    <div class="cuentas-wrapper gap-2">
+      <!-- Botón Historial de Ejecuciones -->
+      <button
+        class="btn btn-outline-primary btn-cuentas"
+        @click="router.push({ name: 'HistorialEjecuciones' })"
+        title="Consultar historial de ejecuciones y auditoría"
+      >
+        <i class="bi bi-clock-history me-2"></i>
+        Historial de Ejecuciones
+      </button>
+
       <!-- Botón Padrón de Conductores -->
       <button
         class="btn btn-outline-primary btn-cuentas"

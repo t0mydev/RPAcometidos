@@ -1,5 +1,6 @@
 import time
 import os
+import re
 from datetime import datetime, timedelta
 from rpacometidos.robots.base import (
     guardar_progreso,
@@ -299,6 +300,13 @@ def procesar_un_cometido(pagina, registro, fila=1, total_registros=1):
     modal = pagina.locator('#mensajeModal')
     try:
         modal.wait_for(state="visible", timeout=12000)
+        try:
+            texto_exito = modal.inner_text(timeout=1500)
+            m_num = re.search(r"N[°º]?\s*(\d{4,})", texto_exito, re.IGNORECASE)
+            if m_num:
+                registro["numero_cometido_personal"] = m_num.group(1)
+        except Exception:
+            pass
         ctx.hacer_clic(modal.locator('button', has_text="Cerrar"), "Cerrando confirmación de grabado", esperar_oculto=modal)
     except Exception:
         raise AccionError(

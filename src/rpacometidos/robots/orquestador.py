@@ -1,5 +1,8 @@
+import os
 import time
+from datetime import datetime
 from playwright.sync_api import sync_playwright
+from rpacometidos.historial_db import registrar_ejecucion_historial
 from rpacometidos.robots.base import (
     guardar_progreso,
     cargar_datos_automatizacion,
@@ -28,6 +31,9 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=400):
 
     usuario_ssd, clave_ssd = cargar_credenciales(sistema="ssd")
     usuario_mop, clave_mop = cargar_credenciales(sistema="mop")
+    nombre_archivo = os.environ.get("RPA_NOMBRE_ARCHIVO", "planilla_cometidos.xlsx")
+    fecha_inicio_dt = datetime.now()
+    lote_iniciado = False
     total_registros = len(datos_excel)
 
     try:
@@ -50,7 +56,7 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=400):
             if navegador is None:
                 navegador = p.firefox.launch(headless=headless, slow_mo=slow_mo)
 
-            contexto = navegador.new_context()
+            contexto = navegador.new_context(locale="en-US")
 
             # 2. Crea las pestañas necesarias
             pagina_ssd = contexto.new_page()
@@ -61,6 +67,7 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=400):
             login_ssd(pagina_ssd, usuario_ssd, clave_ssd)
             login_cometidos(pagina_cometidos, usuario_mop, clave_mop)
             login_firmador(pagina_firmador, usuario_mop, clave_mop)
+            lote_iniciado = True
 
             # 4. Procesa cometido por cometido de forma secuencial
             for fila, registro in enumerate(datos_excel, start=1):
@@ -165,8 +172,20 @@ def ejecutar_orquestador(datos_excel=None, headless=False, slow_mo=400):
         )
         raise e
     finally:
+        if lote_iniciado:
+            try:
+                registrar_ejecucion_historial(
+                    datos_excel=datos_excel,
+                    fecha_inicio_dt=fecha_inicio_dt,
+                    usuario_ssd=usuario_ssd,
+                    usuario_mop=usuario_mop,
+                    nombre_archivo=nombre_archivo,
+                    modo="real"
+                )
+            except Exception:
+                pass
         # Se comenta temporalmente la limpieza para permitir pruebas con PDFs en temp_pdfs
-        # limpiar_pdfs_temporales()
+        limpiar_pdfs_temporales()
         pass
 
 if __name__ == "__main__":

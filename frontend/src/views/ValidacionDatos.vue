@@ -720,7 +720,9 @@ async function iniciarEjecucion() {
 
   try {
     const payload = filas.value.map(f => ({
+      numero_fila_excel: f.numero_fila_excel,
       rut: f.rut,
+      nombre: f.nombre,
       sigla: f.sigla,
       fechainicio: f.fechainicio,
       fechatermino: f.fechatermino,
@@ -746,6 +748,7 @@ async function iniciarEjecucion() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        nombre_archivo: fileName.value,
         filas: payload,
         credenciales: {
           usuario_ssd: credencialUsuarioSsd.value.trim(),

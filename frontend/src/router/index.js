@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import Home from '../views/Home.vue'
 import ValidacionDatos from '../views/ValidacionDatos.vue'
 import EdicionDatos from '../views/EdicionDatos.vue'
+import HistorialEjecuciones from '../views/HistorialEjecuciones.vue'
 
 const routes = [
   {
@@ -18,6 +19,11 @@ const routes = [
     path: '/edicion-datos',
     name: 'EdicionDatos',
     component: EdicionDatos
+  },
+  {
+    path: '/historial',
+    name: 'HistorialEjecuciones',
+    component: HistorialEjecuciones
   }
 ]
 

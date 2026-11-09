@@ -278,10 +278,13 @@ function volverAlInicio() {
 </template>
 
 <style scoped>
-/* ── Layout principal ── */
+/* ── Layout principal (alto fijo a la pantalla, scroll solo en la tabla) ── */
 .edicion-container {
-  min-height: calc(100vh - 57px);
-  padding: 48px 56px;
+  height: calc(100vh - 57px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 28px 48px 24px;
   background-color: var(--color-white);
   font-family: var(--font-body);
 }
@@ -292,15 +295,16 @@ function volverAlInicio() {
   align-items: flex-start;
   justify-content: space-between;
   gap: 24px;
-  margin-bottom: 32px;
+  margin-bottom: 20px;
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .header-izq {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 12px;
+  gap: 10px;
 }
 
 .btn-volver {
@@ -318,14 +322,14 @@ function volverAlInicio() {
 
 .edicion-titulo {
   font-family: var(--font-title);
-  font-size: 32px;
+  font-size: 28px;
   font-weight: 700;
   color: var(--color-black);
   margin: 0;
 }
 
 .edicion-subtitulo {
-  font-size: 15px;
+  font-size: 14px;
   color: var(--color-mid-gray);
   margin: 0;
   max-width: 680px;
@@ -347,7 +351,8 @@ function volverAlInicio() {
   border: 1px solid var(--color-neutral);
   border-radius: 8px;
   padding: 10px 16px;
-  margin-bottom: 28px;
+  margin-bottom: 18px;
+  flex-shrink: 0;
 }
 
 .busqueda-icono {
@@ -371,14 +376,18 @@ function volverAlInicio() {
 
 /* ── Estado cargando ── */
 .estado-mensaje {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 60px 0;
 }
 
-/* ── Contenedor de tabla / lotes ── */
+/* ── Contenedor de tabla / lotes (scrolleable internamente) ── */
 .tabla-wrapper {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--color-neutral);
   border-radius: 10px;
   overflow: hidden;
@@ -389,10 +398,14 @@ function volverAlInicio() {
   padding: 48px 24px;
   color: var(--color-mid-gray);
   font-size: 15px;
-  margin: 0;
+  margin: auto 0;
 }
 
 .lista-lotes {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: auto;
   display: flex;
   flex-direction: column;
 }
@@ -475,6 +488,9 @@ function volverAlInicio() {
 .tabla-conductores thead tr {
   background-color: var(--color-tertiary);
   color: var(--color-white);
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
 .tabla-conductores th {
@@ -591,5 +607,6 @@ function volverAlInicio() {
   margin: 0;
   border-top: 1px solid var(--color-neutral);
   background-color: #fafbfc;
+  flex-shrink: 0;
 }
 </style>

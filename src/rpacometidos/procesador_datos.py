@@ -199,6 +199,7 @@ def validar_registro(datos_entrantes):
         "admin_valido": True,
         "sugerencia_correccion_rut": None,
         "sugerencia_correccion_sigla": None,
+        "campos_faltantes": [],
         "errores": [],
         "errores_por_grupo": errores_por_grupo
     }
@@ -351,6 +352,11 @@ def validar_registro(datos_entrantes):
         msg_viatico = f"No se indicaron días de salida pero los porcentajes suman {suma_porc:g}."
         resultados_validacion['errores'].append(msg_viatico)
         errores_por_grupo['viaticos'].append(msg_viatico)
+    elif total_dias == 0 and suma_porc == 0:
+        resultados_validacion['viaticos_validos'] = False
+        msg_viatico = "Faltan los días de salida y los porcentajes de viáticos."
+        resultados_validacion['errores'].append(msg_viatico)
+        errores_por_grupo['viaticos'].append(msg_viatico)
 
     # 4. Validación de datos administrativos y fechas
     campos_obligatorios = [
@@ -363,10 +369,48 @@ def validar_registro(datos_entrantes):
         val = datos_entrantes.get(campo_req)
         if val is None or str(val).strip() == "" or pd.isna(val):
             resultados_validacion['admin_valido'] = False
+            if campo_req in ('fechainicio', 'fechatermino'):
+                resultados_validacion['fechas_validas'] = False
             msg_req = f"El campo '{label_req}' es obligatorio y está vacío."
             if msg_req not in errores_por_grupo['admin']:
                 resultados_validacion['errores'].append(msg_req)
                 errores_por_grupo['admin'].append(msg_req)
+
+    # 4b. Validación de campos obligatorios no editables en la aplicación
+    campos_no_editables = [
+        ('tipo_movilizacion', 'Tipo de movilización'),
+        ('lugar_cometido', 'Lugar cometido'),
+        ('regiones', 'Región/es'),
+        ('nombre_aprobador', 'Nombre aprobador'),
+        ('nombre_firmantes', 'Nombre firmante/s'),
+        ('tipo_imputacion_presupuestaria', 'Tipo imputación presupuestaria'),
+        ('atribucion', 'Atribución'),
+    ]
+    if datos_entrantes.get('tiene_col_region_principal'):
+        campos_no_editables.insert(2, ('region_principal', 'Región principal'))
+
+    for campo_ne, label_ne in campos_no_editables:
+        val = datos_entrantes.get(campo_ne)
+        if val is None or str(val).strip() == "" or pd.isna(val):
+            resultados_validacion['admin_valido'] = False
+            resultados_validacion['campos_faltantes'].append(label_ne)
+            msg_ne = f"El campo '{label_ne}' es obligatorio y está vacío."
+            if msg_ne not in errores_por_grupo['admin']:
+                resultados_validacion['errores'].append(msg_ne)
+                errores_por_grupo['admin'].append(msg_ne)
+
+    # Personal trasladado es obligatorio salvo que venga Fallback considerando con datos
+    val_personal = datos_entrantes.get('personal_trasladado')
+    val_fallback = datos_entrantes.get('fallback_considerando')
+    sin_personal = val_personal is None or str(val_personal).strip() == "" or pd.isna(val_personal)
+    sin_fallback = val_fallback is None or str(val_fallback).strip() == "" or pd.isna(val_fallback)
+    if sin_personal and sin_fallback:
+        resultados_validacion['admin_valido'] = False
+        resultados_validacion['campos_faltantes'].append('Personal trasladado')
+        msg_pers = "El campo 'Personal trasladado' es obligatorio y está vacío."
+        if msg_pers not in errores_por_grupo['admin']:
+            resultados_validacion['errores'].append(msg_pers)
+            errores_por_grupo['admin'].append(msg_pers)
 
     # Coherencia cronológica de fechas (inicio <= término y mismo mes)
     d_ini = parsear_fecha(datos_entrantes.get('fechainicio'))

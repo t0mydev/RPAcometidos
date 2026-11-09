@@ -4,6 +4,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
+from rpacometidos.historial_db import registrar_ejecucion_historial
 from rpacometidos.robots.base import (
     guardar_progreso,
     cargar_datos_automatizacion,
@@ -15,8 +16,8 @@ from rpacometidos.robots.base import (
 from rpacometidos.procesador_datos import normalizar_rut
 from rpacometidos.robots.robot_ssd import generar_texto_cometido_ssd
 
-# Carga variables de entorno desde .env
-load_dotenv(BASE_DIR / ".env")
+# Carga variables de entorno desde .env (override=True para ignorar valores viejos heredados de Flask)
+load_dotenv(BASE_DIR / ".env", override=True)
 
 # El toggle se lee EXCLUSIVAMENTE desde el archivo .env
 SIMULAR_FALLO = os.getenv("SIMULAR_FALLO", "false").lower() in ("true", "1", "yes")
@@ -325,39 +326,11 @@ def ejecutar_simulacion(datos_excel=None, delay=None):
             if region:
                 emitir("personal", 3, f"Marcando región {region}")
 
-        # ── ATRIBUCIÓN (Punto donde se demuestra la resiliencia si SIMULAR_FALLO=true) ──
+        # ── ATRIBUCIÓN ──
         atribucion_val = str(registro.get('atribucion', '') or '').strip()
         if atribucion_val:
             emitir("personal", 3, "Abriendo modal de atribución")
             emitir("personal", 3, "Buscando atribución", f"Buscando atribución: {atribucion_val}")
-
-            if SIMULAR_FALLO and fila == 1:
-                # Simula la captura exacta del fallo en la atribución igual que en orquestador.py
-                error_simulado = {
-                    "portal": "personal",
-                    "paso_stepper": 3,
-                    "accion": "Buscando atribución",
-                    "mensaje": f"No apareció la opción para seleccionar la atribución '{atribucion_val}'",
-                    "selector": "#btnSeleccionaConfiere"
-                }
-                registro['estado_proceso'] = 'fallido'
-                registro['error'] = error_simulado
-                guardar_datos_automatizacion(datos_excel)
-
-                guardar_progreso(
-                    paso=fila,
-                    total=total_registros,
-                    nombre=rut_raw,
-                    estado="ejecutando",
-                    detalle=f"Fallo en PERSONAL (Buscando atribución): {error_simulado['mensaje']}",
-                    portal="personal",
-                    paso_stepper=3,
-                    accion_actual="Buscando atribución",
-                    ultimo_error=error_simulado
-                )
-                time.sleep(delay * 3)
-                continue
-
             emitir("personal", 3, "Confirmando atribución")
 
         # TD5
@@ -389,8 +362,37 @@ def ejecutar_simulacion(datos_excel=None, delay=None):
 
         # Grabar cometido y PDF
         emitir("personal", 3, "Grabando cometido")
+        registro['numero_cometido_personal'] = f"6230{680 + fila}"
+        guardar_datos_automatizacion(datos_excel)
         emitir("personal", 3, "Cerrando confirmación de grabado")
         emitir("personal", 3, "Descargando PDF del cometido")
+
+        if SIMULAR_FALLO and fila >= 2:
+            # Simula el fallo en la descarga del PDF en los cometidos posteriores al primero
+            error_simulado = {
+                "portal": "personal",
+                "paso_stepper": 3,
+                "accion": "Descargar PDF",
+                "mensaje": "No se pudo descargar el PDF del cometido.",
+                "selector": "#btnImprimirViatico"
+            }
+            registro['estado_proceso'] = 'fallido'
+            registro['error'] = error_simulado
+            guardar_datos_automatizacion(datos_excel)
+
+            guardar_progreso(
+                paso=fila,
+                total=total_registros,
+                nombre=rut_raw,
+                estado="ejecutando",
+                detalle=f"Fallo en PERSONAL (Descargar PDF): {error_simulado['mensaje']}",
+                portal="personal",
+                paso_stepper=3,
+                accion_actual="Descargar PDF",
+                ultimo_error=error_simulado
+            )
+            time.sleep(delay * 3)
+            continue
 
         ruta_pdf = generar_pdf_simulado(rut_raw)
         registro['ruta_pdf'] = ruta_pdf
@@ -435,6 +437,7 @@ def ejecutar_simulacion(datos_excel=None, delay=None):
         emitir("firmador", 4, "Seleccionando región en oficina de partes", "Seleccionando región en oficina de partes: 5")
         emitir("firmador", 4, "Seleccionando destino en oficina de partes", "Seleccionando destino en oficina de partes: 456")
 
+        registro['numero_expediente_firmador'] = f"9381{997 + fila}"
         registro['estado_proceso'] = 'completado'
         registro['error'] = None
         guardar_datos_automatizacion(datos_excel)
@@ -459,7 +462,6 @@ def ejecutar_simulacion(datos_excel=None, delay=None):
     # 5. REGISTRO EN HISTORIAL DE AUDITORÍA
     # ══════════════════════════════════════════
     try:
-        from rpacometidos.historial_db import registrar_ejecucion_historial
         registrar_ejecucion_historial(
             datos_excel=datos_excel,
             fecha_inicio_dt=fecha_inicio_dt,

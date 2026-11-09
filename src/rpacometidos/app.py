@@ -30,6 +30,24 @@ load_dotenv(BASE_DIR / ".env")
 # False = Ejecuta el orquestador real con Playwright
 MODO_SIMULACION = os.getenv("MODO_SIMULACION", "true").lower() in ("true", "1", "yes")
 
+def sanitizar_celda_excel(val):
+    """
+    Sanitiza valores controlados por usuario para evitar CSV/Formula Injection
+    si el texto comienza con '=', '+', '-', '@', '\t' o '\r'.
+    """
+    if val is None:
+        return ""
+    if isinstance(val, (int, float)) and not isinstance(val, bool):
+        return val
+    s = str(val)
+    if s and s[0] in ("=", "+", "-", "@", "\t", "\r"):
+        try:
+            float(s.replace(",", "."))
+            return val
+        except ValueError:
+            return f"'{s}"
+    return val
+
 # Unifica ambas rutas hacia la carpeta static, ahora mismo inutil ya que flask actúa como api y no como servidor web, pero lo dejamos porque a futuro si servirá los archivos estáticos de Vue
 app = Flask(__name__, template_folder="vue", static_folder="vue")
 
@@ -107,10 +125,11 @@ def descargar_excel_corregido():
         ]
         col_map = {campo: buscar_columna(encabezados, header) for campo, header in COLUMNAS}
 
-        # Carga resultados de la última ejecución si existen para anexar folios (SSD, Cometido, Expediente)
+        # Solo anexa folios de auditoría si la petición proviene explícitamente de la etapa post-ejecución
+        incluir_auditoria = str(request.form.get('incluir_auditoria', '')).lower() in ('true', '1', 'yes')
         resultados_por_indice = {}
         path_datos_auto = BASE_DIR / "datos_automatizacion.json"
-        if path_datos_auto.exists():
+        if incluir_auditoria and path_datos_auto.exists():
             try:
                 with open(path_datos_auto, "r", encoding="utf-8") as f:
                     lista_auto = json.load(f)
@@ -137,16 +156,16 @@ def descargar_excel_corregido():
                 hoja.cell(row=fila_header, column=col_idx).value = titulo_col
                 col_auditoria_map[clave_aud] = col_idx
 
-        # Modifica los valores
+        # Modifica los valores sanitizando posibles inyecciones de fórmulas
         for idx, registro in enumerate(datos_corregidos):
             fila_indice = registro.get("numero_fila_excel")
             if not fila_indice:
                 continue
             for campo, col in col_map.items():
                 if col and campo in registro:
-                    hoja.cell(row=fila_indice, column=col).value = registro[campo]
+                    hoja.cell(row=fila_indice, column=col).value = sanitizar_celda_excel(registro[campo])
 
-            # Si hay resultados de ejecución, escribe los números de proceso y estado
+            # Si hay resultados de ejecución vinculados, escribe los números de proceso y estado
             if idx in resultados_por_indice and col_auditoria_map:
                 res_auto = resultados_por_indice[idx]
                 err_info = res_auto.get("error") or {}
@@ -156,11 +175,11 @@ def descargar_excel_corregido():
                     accion_err = str(err_info.get("accion") or "")
                     obs_texto = f"[{portal_err} - {accion_err}] {err_info.get('mensaje')}"
 
-                hoja.cell(row=fila_indice, column=col_auditoria_map["numero_ssd"]).value = res_auto.get("numero_ssd", "")
-                hoja.cell(row=fila_indice, column=col_auditoria_map["numero_cometido_personal"]).value = res_auto.get("numero_cometido_personal", "")
-                hoja.cell(row=fila_indice, column=col_auditoria_map["numero_expediente_firmador"]).value = res_auto.get("numero_expediente_firmador", "")
-                hoja.cell(row=fila_indice, column=col_auditoria_map["estado_proceso"]).value = str(res_auto.get("estado_proceso", "")).upper()
-                hoja.cell(row=fila_indice, column=col_auditoria_map["observacion_error"]).value = obs_texto
+                hoja.cell(row=fila_indice, column=col_auditoria_map["numero_ssd"]).value = sanitizar_celda_excel(res_auto.get("numero_ssd", ""))
+                hoja.cell(row=fila_indice, column=col_auditoria_map["numero_cometido_personal"]).value = sanitizar_celda_excel(res_auto.get("numero_cometido_personal", ""))
+                hoja.cell(row=fila_indice, column=col_auditoria_map["numero_expediente_firmador"]).value = sanitizar_celda_excel(res_auto.get("numero_expediente_firmador", ""))
+                hoja.cell(row=fila_indice, column=col_auditoria_map["estado_proceso"]).value = sanitizar_celda_excel(str(res_auto.get("estado_proceso", "")).upper())
+                hoja.cell(row=fila_indice, column=col_auditoria_map["observacion_error"]).value = sanitizar_celda_excel(obs_texto)
 
         # Guarda el archivo corregido en un buffer en memoria
         buffer = io.BytesIO()
@@ -358,13 +377,13 @@ def exportar_historial_excel(ejecucion_id):
         hoja.append(["REPORTE DE TRAZABILIDAD DE EJECUCIÓN RPA - MOP"])
         hoja.append([
             "ID Ejecución", ejecucion["id"],
-            "Fecha Inicio", ejecucion["fecha_inicio"],
-            "Fecha Término", ejecucion["fecha_termino"],
+            "Fecha Inicio", sanitizar_celda_excel(ejecucion["fecha_inicio"]),
+            "Fecha Término", sanitizar_celda_excel(ejecucion["fecha_termino"]),
         ])
         hoja.append([
-            "Archivo Origen", ejecucion["nombre_archivo"],
-            "Usuario SSD", ejecucion["usuario_ssd"],
-            "Usuario MOP", ejecucion["usuario_mop"],
+            "Archivo Origen", sanitizar_celda_excel(ejecucion["nombre_archivo"]),
+            "Usuario SSD", sanitizar_celda_excel(ejecucion["usuario_ssd"]),
+            "Usuario MOP", sanitizar_celda_excel(ejecucion["usuario_mop"]),
         ])
         hoja.append([
             "Total Cometidos", ejecucion["total_cometidos"],
@@ -396,19 +415,19 @@ def exportar_historial_excel(ejecucion_id):
             hoja.append([
                 c.get("fila_orden", ""),
                 c.get("numero_fila_excel", ""),
-                c.get("rut", ""),
-                c.get("nombre", ""),
-                c.get("sigla", ""),
-                c.get("fechainicio", ""),
-                c.get("fechatermino", ""),
-                c.get("lugar_cometido", ""),
-                c.get("numero_ssd", "") or "—",
-                c.get("numero_cometido", "") or "—",
-                c.get("numero_expediente", "") or "—",
-                str(c.get("estado", "")).upper(),
-                str(c.get("portal_error", "")).upper(),
-                c.get("accion_error", ""),
-                c.get("mensaje_error", ""),
+                sanitizar_celda_excel(c.get("rut", "")),
+                sanitizar_celda_excel(c.get("nombre", "")),
+                sanitizar_celda_excel(c.get("sigla", "")),
+                sanitizar_celda_excel(c.get("fechainicio", "")),
+                sanitizar_celda_excel(c.get("fechatermino", "")),
+                sanitizar_celda_excel(c.get("lugar_cometido", "")),
+                sanitizar_celda_excel(c.get("numero_ssd", "") or "—"),
+                sanitizar_celda_excel(c.get("numero_cometido", "") or "—"),
+                sanitizar_celda_excel(c.get("numero_expediente", "") or "—"),
+                sanitizar_celda_excel(str(c.get("estado", "")).upper()),
+                sanitizar_celda_excel(str(c.get("portal_error", "")).upper()),
+                sanitizar_celda_excel(c.get("accion_error", "")),
+                sanitizar_celda_excel(c.get("mensaje_error", "")),
             ])
 
         buffer = io.BytesIO()

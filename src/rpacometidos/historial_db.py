@@ -101,12 +101,17 @@ def registrar_ejecucion_historial(
         # Carga nombres conocidos para completar el nombre del funcionario si no venía en el registro
         mapa_nombres = {}
         try:
-            from rpacometidos.procesador_datos import cargar_datos_conocidos, normalizar_rut
-            conocidos, _ = cargar_datos_conocidos()
-            for r_norm, info in conocidos.items():
-                mapa_nombres[r_norm] = info.get("nombre", "")
-        except Exception:
-            normalizar_rut = lambda x: str(x or "").strip()
+            from rpacometidos.procesador_datos import obtener_datos_conocidos, normalizar_rut
+            for reg_con in obtener_datos_conocidos():
+                r_norm = normalizar_rut(reg_con.get("rut"))
+                if r_norm:
+                    mapa_nombres[r_norm] = str(reg_con.get("nombre") or "").strip()
+        except Exception as e:
+            print(f"[HISTORIAL DB] Aviso al cargar mapa de nombres: {e}")
+            try:
+                from rpacometidos.procesador_datos import normalizar_rut
+            except Exception:
+                normalizar_rut = lambda x: str(x or "").strip()
 
         total = len(datos_excel or [])
         completados = 0
@@ -217,7 +222,8 @@ def registrar_ejecucion_historial(
                 )
             conn.commit()
             return ejecucion_id
-    except Exception:
+    except Exception as e:
+        print(f"[HISTORIAL DB] Error crítico al persistir ejecución en SQLite: {e}")
         return None
 
 

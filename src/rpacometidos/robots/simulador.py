@@ -55,6 +55,9 @@ def ejecutar_simulacion(datos_excel=None, delay=None):
     del primer cometido, demostrando que el robot no se cae, aísla el error y procesa
     exitosamente el segundo cometido.
     """
+    fecha_inicio_dt = datetime.now()
+    nombre_archivo = os.environ.get("RPA_NOMBRE_ARCHIVO", "planilla_simulada.xlsx")
+
     if datos_excel is None:
         try:
             datos_excel = cargar_datos_automatizacion()
@@ -451,6 +454,22 @@ def ejecutar_simulacion(datos_excel=None, delay=None):
         paso_stepper=5,
         accion_actual="Fin de automatización"
     )
+
+    # ══════════════════════════════════════════
+    # 5. REGISTRO EN HISTORIAL DE AUDITORÍA
+    # ══════════════════════════════════════════
+    try:
+        from rpacometidos.historial_db import registrar_ejecucion_historial
+        registrar_ejecucion_historial(
+            datos_excel=datos_excel,
+            fecha_inicio_dt=fecha_inicio_dt,
+            usuario_ssd=usuario_ssd,
+            usuario_mop=usuario_sim,
+            nombre_archivo=nombre_archivo,
+            modo="simulado"
+        )
+    except Exception as e:
+        print(f"[SIMULADOR] Error al registrar historial simulado: {e}")
 
 if __name__ == "__main__":
     ejecutar_simulacion()

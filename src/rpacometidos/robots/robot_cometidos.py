@@ -106,25 +106,32 @@ def procesar_un_cometido(pagina, registro, fila=1, total_registros=1):
     pagina.wait_for_load_state('networkidle')
     esperar_overlays(pagina)
 
-    # 3. Rellena fecha inicio y fecha término (campos con máscara)
+    # 3. Rellena fecha inicio y fecha término (campos con máscara según locale del navegador)
     fecha_inicio_raw = str(registro.get('fechainicio', '')).strip()
     fecha_termino_raw = str(registro.get('fechatermino', '')).strip()
     fecha_inicio = fecha_inicio_raw
     fecha_termino = fecha_termino_raw
 
+    try:
+        es_dia_primero = bool(
+            pagina.evaluate("() => new Intl.DateTimeFormat().format(new Date(2026, 0, 31)).startsWith('31')")
+        )
+    except Exception:
+        es_dia_primero = False
+
     if "/" in fecha_inicio:
         d1, m1, a1 = fecha_inicio.split("/")
-        fecha_inicio = f"{m1}{d1}{a1}"
+        fecha_inicio = f"{d1}{m1}{a1}" if es_dia_primero else f"{m1}{d1}{a1}"
     elif "-" in fecha_inicio:
         d1, m1, a1 = fecha_inicio.split("-")
-        fecha_inicio = f"{m1}{d1}{a1}"
+        fecha_inicio = f"{d1}{m1}{a1}" if es_dia_primero else f"{m1}{d1}{a1}"
 
     if "/" in fecha_termino:
         d2, m2, a2 = fecha_termino.split("/")
-        fecha_termino = f"{m2}{d2}{a2}"
+        fecha_termino = f"{d2}{m2}{a2}" if es_dia_primero else f"{m2}{d2}{a2}"
     elif "-" in fecha_termino:
         d2, m2, a2 = fecha_termino.split("-")
-        fecha_termino = f"{m2}{d2}{a2}"
+        fecha_termino = f"{d2}{m2}{a2}" if es_dia_primero else f"{m2}{d2}{a2}"
 
     ctx.escribir(pagina.locator('#txtFechaInicio'), fecha_inicio, "Ingresando fecha de inicio", delay_ms=30, secuencial=True, valor_mostrar=fecha_inicio_raw)
     ctx.escribir(pagina.locator('#txtFechaTermino'), fecha_termino, "Ingresando fecha de término", delay_ms=30, secuencial=True, valor_mostrar=fecha_termino_raw)

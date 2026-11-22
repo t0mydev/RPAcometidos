@@ -167,6 +167,7 @@ def procesar_planilla_completa(archivo_excel):
             "tipo_movilizacion": tipo_movilizacion,
             "lugar_cometido": lugar_cometido,
             "region_principal": region_principal,
+            "tiene_col_region_principal": bool(col_region_principal),
             "regiones": regiones,
             "personal_trasladado": personal_trasladado,
             "nombre_aprobador": nombre_aprobador,

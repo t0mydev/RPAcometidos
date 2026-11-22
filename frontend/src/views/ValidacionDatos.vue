@@ -70,19 +70,9 @@ const automatizando       = ref(false)
 const completadoExitoso   = ref(false)
 const huboError           = ref(false)
 const mensajeEstado       = ref('')
-const mostrarTerminal     = ref(false)
 
-// ─── Consola / Logs ───────────────────────────────────────────
-const logsAutomatizacion  = ref([])
-const consolaCuerpoRef    = ref(null)
 let intervaloProgreso     = null
-const ultimoDetalleRegistrado = ref('')
-
-// Rastreadores para evitar duplicidad de checkpoints en polling
-const cometidosIniciados = new Set()
-const cometidosFallidosLogueados = new Set()
-const cometidosCompletadosLogueados = new Set()
-let resumenEmitido = false
+let resumenEmitido        = false
 
 // ─── Medición de Tiempos (Cronómetro Global y por Cometido) ───
 const tiempoInicioGlobal       = ref(null)
@@ -154,16 +144,6 @@ function emitirSonidoExito() {
   }
 }
 
-// Auto-scroll al abrir la terminal si ya hay logs
-watch(mostrarTerminal, async (newVal) => {
-  if (newVal) {
-    await nextTick()
-    if (consolaCuerpoRef.value) {
-      consolaCuerpoRef.value.scrollTop = consolaCuerpoRef.value.scrollHeight
-    }
-  }
-})
-
 // ─── Estados por cometido (colores de las filas) ──────────────
 // Mapa: indice del cometido → { estado, portal, accion_actual, detalle, ultimo_error }
 const estadosCometidos = ref([])
@@ -183,20 +163,38 @@ const porcentajeAvance = computed(() => {
 })
 
 const tieneErroresEnLogs = computed(() =>
-  logsAutomatizacion.value.some(l => l.tipo === 'checkpoint_error')
+  estadosCometidos.value.some(c => c.estado === 'fallido')
 )
 
 // Modal de detalle de error al hacer clic en "Ver detalle" en la fila
 const detalleErrorModal = ref(null)
 
+// Índice del cometido cuyo paso en vivo se está siguiendo en el acordeón desplegable
+const indiceSiguiendoPaso = ref(null)
+
+function alternarSeguirPaso(indice) {
+  indiceSiguiendoPaso.value = indiceSiguiendoPaso.value === indice ? null : indice
+}
+
+function pasoPortalCometido(indice) {
+  const ec = estadosCometidos.value.find(c => c.indice === indice)
+  if (!ec) return 2
+  return deducirPasoStepper(ec, null)
+}
+
+function obtenerDetalleVivoCometido(indice) {
+  const ec = estadosCometidos.value.find(c => c.indice === indice)
+  if (!ec) return 'Preparando cometido...'
+  return ec.detalle || ec.accion_actual || 'Ejecutando acción en el portal...'
+}
+
+function obtenerAccionCortaVivoCometido(indice) {
+  const ec = estadosCometidos.value.find(c => c.indice === indice)
+  if (!ec) return 'Iniciando'
+  return ec.accion_actual || ec.detalle || 'Procesando'
+}
+
 function inspeccionarErrorFila(indice) {
-  const logErr = logsAutomatizacion.value.find(
-    l => l.tipo === 'checkpoint_error' && l.cometidoNum === indice + 1
-  )
-  if (logErr) {
-    detalleErrorModal.value = logErr
-    return
-  }
   const ec = estadosCometidos.value.find(c => c.indice === indice)
   const mapaPortales = {
     ssd: 'Portal SSD (Gestión Documental)',
@@ -325,6 +323,35 @@ function chipsDias(diasStr) {
     .map(d => mapa[d] || d.substring(0, 2).toUpperCase())
 }
 
+const CAMPOS_EXCEL_OBLIGATORIOS_NO_EDITABLES = [
+  { campo: 'tipo_movilizacion',              label: 'Tipo de movilización' },
+  { campo: 'lugar_cometido',                 label: 'Lugar cometido' },
+  { campo: 'regiones',                       label: 'Región/es' },
+  { campo: 'nombre_aprobador',               label: 'Nombre aprobador' },
+  { campo: 'nombre_firmantes',               label: 'Nombre firmante/s' },
+  { campo: 'tipo_imputacion_presupuestaria', label: 'Tipo imputación presupuestaria' },
+  { campo: 'atribucion',                     label: 'Atribución' },
+]
+
+function camposNoEditablesFaltantes(fila) {
+  if (!fila) return []
+  const faltantes = []
+  for (const { campo, label } of CAMPOS_EXCEL_OBLIGATORIOS_NO_EDITABLES) {
+    if (!fila[campo] || String(fila[campo]).trim() === '') {
+      faltantes.push(label)
+    }
+  }
+  if (fila.tiene_col_region_principal && (!fila.region_principal || String(fila.region_principal).trim() === '')) {
+    faltantes.push('Región principal')
+  }
+  const tienePersonal = Boolean(fila.personal_trasladado && String(fila.personal_trasladado).trim() !== '')
+  const tieneFallback = Boolean(fila.fallback_considerando && String(fila.fallback_considerando).trim() !== '')
+  if (!tienePersonal && !tieneFallback) {
+    faltantes.push('Personal trasladado')
+  }
+  return faltantes
+}
+
 // Lista de errores semánticos de una fila específica según las validaciones del backend
 function erroresDeFila(fila) {
   const e = []
@@ -342,66 +369,15 @@ function erroresDeFila(fila) {
       if (!e.includes('sigla')) e.push('sigla')
     }
   }
+  for (const faltante of camposNoEditablesFaltantes(fila)) {
+    const key = `faltante:${faltante}`
+    if (!e.includes(key)) e.push(key)
+  }
   return e
 }
 
 function filaTieneError(fila, campo) {
   return erroresDeFila(fila).includes(campo)
-}
-
-// ─── Consola: agregar log con auto-scroll y metadatos ─────────
-function agregarLog(entrada) {
-  const ahora = new Date()
-  const hora = ahora.toTimeString().split(' ')[0]
-  let item = {}
-  if (typeof entrada === 'string') {
-    item = {
-      id: Date.now() + Math.random(),
-      hora,
-      tipo: 'info',
-      texto: entrada,
-    }
-  } else {
-    item = {
-      id: Date.now() + Math.random(),
-      hora: entrada.hora || hora,
-      ...entrada,
-    }
-  }
-  logsAutomatizacion.value.push(item)
-  nextTick(() => {
-    if (consolaCuerpoRef.value) {
-      consolaCuerpoRef.value.scrollTop = consolaCuerpoRef.value.scrollHeight
-    }
-  })
-}
-
-function copiarLogs() {
-  if (logsAutomatizacion.value.length === 0) return
-  const texto = logsAutomatizacion.value.map(l => {
-    if (l.tipo === 'checkpoint_error') {
-      const titulo = l.cometidoNum > 0
-        ? `FALLO EN COMETIDO #${l.cometidoNum} (${l.portalNombre})`
-        : `NO SE PUDO INICIAR LA AUTOMATIZACIÓN`
-      const lineaFunc = l.rut && l.rut !== 'N/A' ? `\n  Funcionario: ${l.rut}` : ''
-      return `[${l.hora}] ❌ ${titulo}${lineaFunc}\n  Paso: ${l.accion}\n  Motivo: ${l.errorMensaje}`
-    } else if (l.tipo === 'checkpoint_exito') {
-      return `[${l.hora}] ✔ ${l.texto}`
-    } else if (l.tipo === 'inicio_cometido') {
-      return `[${l.hora}] ▶ ${l.texto}`
-    } else if (l.tipo === 'resumen') {
-      return `[${l.hora}] 🏁 RESUMEN: Total: ${l.total} | Completados: ${l.completados} | Fallidos: ${l.fallidos}`
-    }
-    return `[${l.hora}] › ${l.texto}`
-  }).join('\n')
-
-  navigator.clipboard.writeText(texto)
-    .then(() => alert('Logs copiados al portapapeles correctamente.'))
-    .catch(() => {})
-}
-
-function limpiarLogs() {
-  logsAutomatizacion.value = []
 }
 
 // Deducción dinámica del portal y paso del sub-stepper por cometido (SSD: 2, Personal: 3, Firmador: 4)
@@ -423,10 +399,6 @@ function deducirPasoStepper(activo, data) {
 // ─── Polling: monitoreo de progreso del backend (ICD v1.0.0) ───
 function comenzarMonitoreoProgreso() {
   if (intervaloProgreso) clearInterval(intervaloProgreso)
-  ultimoDetalleRegistrado.value = ''
-  cometidosIniciados.clear()
-  cometidosFallidosLogueados.clear()
-  cometidosCompletadosLogueados.clear()
   resumenEmitido = false
 
   intervaloProgreso = setInterval(async () => {
@@ -450,6 +422,9 @@ function comenzarMonitoreoProgreso() {
               tiemposCometidos.value[c.indice] = { inicio: Date.now(), fin: null, duracion: 0 }
             }
           } else if (c.estado === 'completado' || c.estado === 'fallido') {
+            if (indiceSiguiendoPaso.value === c.indice) {
+              indiceSiguiendoPaso.value = null
+            }
             if (tiemposCometidos.value[c.indice] && !tiemposCometidos.value[c.indice].fin) {
               tiemposCometidos.value[c.indice].fin = Date.now()
               tiemposCometidos.value[c.indice].duracion = Math.max(
@@ -464,11 +439,6 @@ function comenzarMonitoreoProgreso() {
       }
 
       if (data.estado === 'iniciando') {
-        // Fase de login en portales MOP (SSD, Personal, Firmador)
-        if (data.detalle && ultimoDetalleRegistrado.value !== data.detalle) {
-          ultimoDetalleRegistrado.value = data.detalle
-          agregarLog({ tipo: 'info', texto: data.detalle })
-        }
         pasoSubStepper.value = data.paso_stepper || 2
 
       } else if (data.estado === 'ejecutando') {
@@ -489,72 +459,8 @@ function comenzarMonitoreoProgreso() {
           }
         }
 
-        // 1. Detectar si un cometido entra en proceso por primera vez
-        (data.estados_cometidos || []).forEach(c => {
-          if (!cometidosIniciados.has(c.indice)) {
-            cometidosIniciados.add(c.indice)
-            const tot = data.total_cometidos || filas.value.length
-            agregarLog({
-              tipo: 'inicio_cometido',
-              cometidoNum: c.indice + 1,
-              total: tot,
-              rut: formatearRut(c.rut),
-              texto: `Iniciando Cometido #${c.indice + 1} de ${tot} — Funcionario RUT: ${formatearRut(c.rut)}`,
-            })
-          }
-        })
-
-        // 2. Detectar si un cometido falló (Checkpoint con alerta y output de Python)
-        (data.estados_cometidos || []).forEach(c => {
-          if (c.estado === 'fallido' && !cometidosFallidosLogueados.has(c.indice)) {
-            cometidosFallidosLogueados.add(c.indice)
-
-            const mapaPortales = {
-              ssd: 'Portal SSD (Gestión Documental)',
-              personal: 'Portal Personal MOP (Viáticos)',
-              firmador: 'Portal Firmador MOP (Firmas)',
-              general: 'Sistema General',
-            }
-            const portalNombre = mapaPortales[c.portal] || (c.portal ? String(c.portal).toUpperCase() : 'PORTAL INSTITUCIONAL')
-            const err = c.ultimo_error
-
-            const accion = err?.accion || c.accion_actual || 'Ejecutando acción'
-            const mensaje = err?.mensaje || c.detalle || 'Error detectado en el proceso'
-
-            agregarLog({
-              tipo: 'checkpoint_error',
-              cometidoNum: c.indice + 1,
-              rut: formatearRut(c.rut),
-              portalNombre,
-              accion,
-              errorMensaje: mensaje,
-              texto: `❌ FALLO EN COMETIDO #${c.indice + 1} (${portalNombre})`,
-            })
-          }
-        })
-
-        // 3. Detectar si un cometido se completó exitosamente
-        (data.estados_cometidos || []).forEach(c => {
-          if (c.estado === 'completado' && !cometidosCompletadosLogueados.has(c.indice)) {
-            cometidosCompletadosLogueados.add(c.indice)
-            agregarLog({
-              tipo: 'checkpoint_exito',
-              cometidoNum: c.indice + 1,
-              rut: formatearRut(c.rut),
-              texto: `✔ Cometido #${c.indice + 1} finalizado con éxito (RUT: ${formatearRut(c.rut)})`,
-            })
-          }
-        })
-
-        // 4. Detalle atómico en vivo (si es un paso nuevo y no es duplicado del fallo)
-        if (data.detalle && ultimoDetalleRegistrado.value !== data.detalle) {
-          ultimoDetalleRegistrado.value = data.detalle
-          if (!data.detalle.startsWith('Fallo en ') && !data.detalle.includes('Error inesperado')) {
-            agregarLog({ tipo: 'info', texto: data.detalle })
-          }
-        }
-
       } else if (data.estado === 'completado') {
+        indiceSiguiendoPaso.value = null
         // Sincroniza estados finales
         if (data.estados_cometidos) {
           estadosCometidos.value = data.estados_cometidos
@@ -569,55 +475,8 @@ function comenzarMonitoreoProgreso() {
           })
         }
 
-        // Asegurar que cometidos finales queden registrados en logs
-        (data.estados_cometidos || []).forEach(c => {
-          if (c.estado === 'fallido' && !cometidosFallidosLogueados.has(c.indice)) {
-            cometidosFallidosLogueados.add(c.indice)
-            const mapaPortales = {
-              ssd: 'Portal SSD (Gestión Documental)',
-              personal: 'Portal Personal MOP (Viáticos)',
-              firmador: 'Portal Firmador MOP (Firmas)',
-              general: 'Sistema General',
-            }
-            const portalNombre = mapaPortales[c.portal] || (c.portal ? String(c.portal).toUpperCase() : 'PORTAL INSTITUCIONAL')
-            const err = c.ultimo_error
-            const accion = err?.accion || c.accion_actual || 'Ejecutando acción'
-            const mensaje = err?.mensaje || c.detalle || 'Error detectado en el proceso'
-
-            agregarLog({
-              tipo: 'checkpoint_error',
-              cometidoNum: c.indice + 1,
-              rut: formatearRut(c.rut),
-              portalNombre,
-              accion,
-              errorMensaje: mensaje,
-              texto: `❌ FALLO EN COMETIDO #${c.indice + 1} (${portalNombre})`,
-            })
-          } else if (c.estado === 'completado' && !cometidosCompletadosLogueados.has(c.indice)) {
-            cometidosCompletadosLogueados.add(c.indice)
-            agregarLog({
-              tipo: 'checkpoint_exito',
-              cometidoNum: c.indice + 1,
-              rut: formatearRut(c.rut),
-              texto: `✔ Cometido #${c.indice + 1} finalizado con éxito (RUT: ${formatearRut(c.rut)})`,
-            })
-          }
-        })
-
         if (!resumenEmitido) {
           resumenEmitido = true
-          const tot = data.total_cometidos || filas.value.length
-          const comp = (data.estados_cometidos || []).filter(c => c.estado === 'completado').length
-          const fall = (data.estados_cometidos || []).filter(c => c.estado === 'fallido').length
-
-          agregarLog({
-            tipo: 'resumen',
-            total: tot,
-            completados: comp,
-            fallidos: fall,
-            texto: `Automatización finalizada. Completados: ${comp} | Con errores: ${fall}`,
-          })
-
           // Sonido armónico sutil al finalizar
           emitirSonidoExito()
         }
@@ -638,15 +497,6 @@ function comenzarMonitoreoProgreso() {
 
       } else if (data.estado === 'error_credenciales') {
         const errDesc = data.detalle || 'Usuario o contraseña incorrectos. Verifica tus credenciales e intenta nuevamente.'
-        agregarLog({
-          tipo: 'checkpoint_error',
-          cometidoNum: 0,
-          rut: 'N/A',
-          portalNombre: 'Inicio de Sesión MOP',
-          accion: 'Verificación de credenciales',
-          errorMensaje: errDesc,
-          texto: errDesc,
-        })
         detenerMonitoreoProgreso()
         automatizando.value = false
         huboError.value = true
@@ -657,15 +507,6 @@ function comenzarMonitoreoProgreso() {
 
       } else if (data.estado === 'error') {
         const errDesc = data.detalle || 'No se pudo completar el inicio del proceso.'
-        agregarLog({
-          tipo: 'checkpoint_error',
-          cometidoNum: 0,
-          rut: 'N/A',
-          portalNombre: 'Inicio de Automatización',
-          accion: 'Conexión / Inicio de sesión en portales MOP',
-          errorMensaje: errDesc,
-          texto: errDesc,
-        })
         detenerMonitoreoProgreso()
         automatizando.value = false
         huboError.value = true
@@ -693,15 +534,12 @@ async function iniciarEjecucion() {
   automatizando.value = true
   completadoExitoso.value = false
   huboError.value = false
-  logsAutomatizacion.value = []
   estadosCometidos.value = []
   tiemposCometidos.value = {}
   cometidoActualIndice.value = -1
+  indiceSiguiendoPaso.value = null
   pasoSubStepper.value = 2
 
-  cometidosIniciados.clear()
-  cometidosFallidosLogueados.clear()
-  cometidosCompletadosLogueados.clear()
   resumenEmitido = false
 
   tiempoInicioGlobal.value = Date.now()
@@ -712,11 +550,6 @@ async function iniciarEjecucion() {
       segundosTranscurridos.value = Math.floor((Date.now() - tiempoInicioGlobal.value) / 1000)
     }
   }, 1000)
-
-  agregarLog({
-    tipo: 'info',
-    texto: 'Iniciando el motor de automatización Playwright en segundo plano...',
-  })
 
   try {
     const payload = filas.value.map(f => ({
@@ -770,28 +603,10 @@ async function iniciarEjecucion() {
       totalCometidos.value = filas.value.length
       comenzarMonitoreoProgreso()
     } else {
-      agregarLog({
-        tipo: 'checkpoint_error',
-        cometidoNum: 0,
-        rut: 'N/A',
-        portalNombre: 'Servidor Local',
-        accion: 'Iniciar automatización',
-        errorMensaje: data.mensaje || 'Respuesta negativa del servidor',
-        texto: `Error al iniciar: ${data.mensaje}`,
-      })
       automatizando.value = false
       huboError.value = true
     }
   } catch (e) {
-    agregarLog({
-      tipo: 'checkpoint_error',
-      cometidoNum: 0,
-      rut: 'N/A',
-      portalNombre: 'Red / Conexión',
-      accion: 'Comunicación con el servidor local',
-      errorMensaje: 'No se pudo contactar con el servidor de la aplicación.',
-      texto: `Error de conexión: ${e.message}`,
-    })
     automatizando.value = false
     huboError.value = true
   }
@@ -1332,15 +1147,28 @@ function revalidarAdminFila(fila) {
   const dTer = parsearFechaDMY(fila.fechatermino)
   const fechasOk = Boolean(dIni && dTer && fechasMismoMes(dIni, dTer) && dIni <= dTer)
   fila.fechas_validas = fechasOk
-  const obligatoriosOk = Boolean(
+  const obligatoriosEditablesOk = Boolean(
     String(fila.fechainicio || '').trim() &&
     String(fila.fechatermino || '').trim() &&
     String(fila.dias_salida || '').trim() &&
     String(fila.sigla || '').trim()
   )
-  fila.admin_valido = fechasOk && obligatoriosOk
-  if (fila.admin_valido && fila.errores_por_grupo) {
-    fila.errores_por_grupo.admin = []
+  const faltantesNoEditables = camposNoEditablesFaltantes(fila)
+  fila.campos_faltantes = faltantesNoEditables
+  fila.admin_valido = fechasOk && obligatoriosEditablesOk && faltantesNoEditables.length === 0
+
+  if (fila.errores_por_grupo) {
+    const mensajesFaltantes = faltantesNoEditables.map(
+      label => `El campo '${label}' es obligatorio y está vacío.`
+    )
+    if (fila.admin_valido) {
+      fila.errores_por_grupo.admin = []
+    } else {
+      const previos = (fila.errores_por_grupo.admin || []).filter(
+        m => !mensajesFaltantes.includes(m)
+      )
+      fila.errores_por_grupo.admin = [...previos, ...mensajesFaltantes]
+    }
   }
 }
 
@@ -1556,146 +1384,6 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
           ></div>
         </template>
       </div>
-
-      <!-- Botón de terminal (extremo derecho a la altura del stepper principal) -->
-      <button
-        class="btn-terminal-icono"
-        :class="{
-          'btn-terminal-activo': mostrarTerminal,
-          'btn-terminal--error': tieneErroresEnLogs,
-          'btn-terminal--ejecutando': automatizando
-        }"
-        @click="mostrarTerminal = !mostrarTerminal"
-        :title="mostrarTerminal ? 'Ocultar consola de logs' : 'Abrir consola de procesos RPA'"
-      >
-        <i class="bi bi-terminal-fill"></i>
-        <!-- Indicador de alerta o pulso -->
-        <span v-if="tieneErroresEnLogs" class="terminal-dot-alerta" title="Errores detectados en la ejecución"></span>
-        <span v-else-if="automatizando" class="terminal-dot-pulso" title="Robot en ejecución"></span>
-      </button>
-    </div>
-
-    <!-- Panel de terminal (desplegable flotante) -->
-    <div v-show="mostrarTerminal" class="terminal-drawer">
-      <div class="terminal-drawer-header">
-        <div class="d-flex align-items-center gap-2">
-          <i class="bi bi-terminal-fill text-info fs-6"></i>
-          <span class="fw-bold">Consola de Procesos RPA</span>
-          <span
-            class="terminal-badge"
-            :class="{
-              'badge-activa': automatizando,
-              'badge-fin': completadoExitoso && !tieneErroresEnLogs,
-              'badge-error': tieneErroresEnLogs
-            }"
-          >
-            {{ automatizando ? 'En ejecución' : (completadoExitoso ? (tieneErroresEnLogs ? 'Finalizado con obs.' : 'Finalizado OK') : 'Inactivo') }}
-          </span>
-        </div>
-        <div class="d-flex align-items-center gap-1">
-          <button class="btn-terminal-accion" @click="copiarLogs" title="Copiar logs al portapapeles">
-            <i class="bi bi-clipboard"></i>
-          </button>
-          <button class="btn-terminal-accion" @click="limpiarLogs" title="Limpiar pantalla">
-            <i class="bi bi-trash"></i>
-          </button>
-          <button class="btn-cerrar-terminal" @click="mostrarTerminal = false" title="Cerrar consola">
-            <i class="bi bi-x-lg"></i>
-          </button>
-        </div>
-      </div>
-
-      <div class="terminal-drawer-cuerpo" ref="consolaCuerpoRef">
-        <!-- Sin logs aún -->
-        <div v-if="logsAutomatizacion.length === 0" class="consola-vacia">
-          <i class="bi bi-terminal mb-2 text-muted" style="font-size:26px"></i>
-          <span>Aún no hay eventos registrados. Presiona <strong>Iniciar Automatización</strong> para ver la telemetría en tiempo real.</span>
-        </div>
-
-        <!-- Render de logs interactivo y con checkpoints -->
-        <template v-for="log in logsAutomatizacion" :key="log.id">
-          <!-- 1. Tarjeta de error clara para el usuario -->
-          <div
-            v-if="log.tipo === 'checkpoint_error'"
-            class="consola-card-error"
-            :id="'log-checkpoint-' + (log.cometidoNum - 1)"
-          >
-            <div class="card-error-header">
-              <i class="bi bi-exclamation-octagon-fill text-danger fs-6"></i>
-              <span v-if="log.cometidoNum > 0">Fallo en Cometido #{{ log.cometidoNum }} — {{ log.portalNombre }}</span>
-              <span v-else>No se pudo iniciar la automatización</span>
-            </div>
-            <div class="card-error-detalles">
-              <div v-if="log.rut && log.rut !== 'N/A'" class="error-dato-item">
-                <span class="error-dato-clave">Funcionario:</span>
-                <span class="error-dato-valor">{{ log.rut }}</span>
-              </div>
-              <div class="error-dato-item">
-                <span class="error-dato-clave">Paso:</span>
-                <span class="error-dato-accion">{{ log.accion }}</span>
-              </div>
-              <div class="error-dato-item">
-                <span class="error-dato-clave">Motivo:</span>
-                <span class="error-dato-valor">{{ log.errorMensaje }}</span>
-              </div>
-            </div>
-
-            <div v-if="log.cometidoNum > 0" class="card-error-footer">
-              <i class="bi bi-arrow-right-circle text-warning me-1"></i>
-              Se omitió este cometido y el proceso continuó con el siguiente.
-            </div>
-          </div>
-
-          <!-- 2. Checkpoint de cometido exitoso -->
-          <div v-else-if="log.tipo === 'checkpoint_exito'" class="consola-card-exito">
-            <span class="consola-hora">[{{ log.hora }}]</span>
-            <i class="bi bi-check-circle-fill text-success me-1"></i>
-            <span>{{ log.texto }}</span>
-          </div>
-
-          <!-- 3. Banner de inicio de cometido -->
-          <div v-else-if="log.tipo === 'inicio_cometido'" class="consola-banner-inicio">
-            <span class="consola-hora">[{{ log.hora }}]</span>
-            <i class="bi bi-play-circle-fill text-info me-1"></i>
-            <span>{{ log.texto }}</span>
-          </div>
-
-          <!-- 4. Resumen final de la corrida -->
-          <div v-else-if="log.tipo === 'resumen'" class="consola-card-resumen">
-            <div class="resumen-titulo">
-              <i class="bi bi-flag-fill text-info"></i>
-              <span>Resumen Final de Automatización</span>
-            </div>
-            <div class="resumen-estadisticas">
-              <div class="resumen-kpi">
-                <span class="kpi-num">{{ log.total }}</span>
-                <span class="kpi-etiqueta">Total</span>
-              </div>
-              <div class="resumen-kpi text-success">
-                <span class="kpi-num text-success">{{ log.completados }}</span>
-                <span class="kpi-etiqueta">Completados</span>
-              </div>
-              <div class="resumen-kpi" :class="log.fallidos > 0 ? 'text-danger' : 'text-muted'">
-                <span class="kpi-num" :class="log.fallidos > 0 ? 'text-danger' : 'text-muted'">{{ log.fallidos }}</span>
-                <span class="kpi-etiqueta">Con Errores</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- 5. Línea de log estándar -->
-          <div v-else class="consola-linea">
-            <span class="consola-hora">[{{ log.hora }}]</span>
-            <span class="consola-prefijo">›</span>
-            <span class="consola-texto">{{ log.texto }}</span>
-          </div>
-        </template>
-
-        <!-- Indicador de ejecución en curso -->
-        <div v-if="automatizando" class="consola-linea consola-linea--activo mt-1">
-          <span class="cursor-blink">▌</span>
-          <span>Procesando en segundo plano...</span>
-        </div>
-      </div>
     </div>
 
 
@@ -1861,158 +1549,264 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
               </tr>
             </thead>
             <tbody>
-              <tr
-                v-for="(fila, idx) in filas"
-                :key="fila.numero_fila_excel"
-                :ref="el => guardarRefFila(el, idx)"
-                :class="[
-                  etapaActual === 1 && erroresDeFila(fila).length > 0 ? 'fila-con-error' : '',
-                  colorFilaEjecucion(idx),
-                ]"
-              >
-                <!-- # Cometido -->
-                <td class="col-n">
-                  <span class="badge-fila">N°{{ fila.numero_cometido || (idx + 1) }}</span>
-                </td>
+              <template v-for="(fila, idx) in filas" :key="fila.numero_fila_excel">
+                <tr
+                  :ref="el => guardarRefFila(el, idx)"
+                  :class="[
+                    etapaActual === 1 && erroresDeFila(fila).length > 0 ? 'fila-con-error' : '',
+                    colorFilaEjecucion(idx),
+                  ]"
+                >
+                  <!-- # Cometido -->
+                  <td class="col-n">
+                    <span class="badge-fila">N°{{ fila.numero_cometido || (idx + 1) }}</span>
+                  </td>
 
-                <!-- RUT -->
-                <td class="col-conductor">
-                  <div class="conductor-bloque" :class="{ 'celda-corregida-pulso': filasCorregidasRecientes.has(fila.numero_fila_excel) }">
-                    <span class="conductor-rut" :class="{ 'celda-error': filaTieneError(fila, 'rut') }">
-                      {{ formatearRut(fila.rut) }}
-                      <i v-if="filaTieneError(fila, 'rut')" class="bi bi-exclamation-triangle-fill ms-1 text-danger"></i>
-                    </span>
-                    <!-- Sugerencia inline de RUT (corrección desde la tabla) -->
-                    <div v-if="!fila.rut_valido && fila.sugerencia_correccion_rut" class="sugerencia-inline">
-                      <i class="bi bi-lightbulb-fill text-warning"></i>
-                      <span>¿{{ sugerenciaRutConDv(fila) }}?</span>
-                      <button class="btn-corregir-inline"
-                        @click="corregirFilaDirectamente({ campo:'rut', sugerencia: fila.sugerencia_correccion_rut, fila_ref: fila })">
-                        Corregir
-                      </button>
+                  <!-- RUT -->
+                  <td class="col-conductor">
+                    <div class="conductor-bloque" :class="{ 'celda-corregida-pulso': filasCorregidasRecientes.has(fila.numero_fila_excel) }">
+                      <span class="conductor-rut" :class="{ 'celda-error': filaTieneError(fila, 'rut') }">
+                        {{ formatearRut(fila.rut) }}
+                        <i v-if="filaTieneError(fila, 'rut')" class="bi bi-exclamation-triangle-fill ms-1 text-danger"></i>
+                      </span>
+                      <!-- Sugerencia inline de RUT (corrección desde la tabla) -->
+                      <div v-if="!fila.rut_valido && fila.sugerencia_correccion_rut" class="sugerencia-inline">
+                        <i class="bi bi-lightbulb-fill text-warning"></i>
+                        <span>¿{{ sugerenciaRutConDv(fila) }}?</span>
+                        <button class="btn-corregir-inline"
+                          @click="corregirFilaDirectamente({ campo:'rut', sugerencia: fila.sugerencia_correccion_rut, fila_ref: fila })">
+                          Corregir
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                </td>
+                  </td>
 
-                <!-- Fechas -->
-                <td class="col-fechas">
-                  <div class="fechas-bloque"
-                    :class="{
-                      'celda-error': filaTieneError(fila,'fechas') || filaTieneError(fila,'fechainicio') || filaTieneError(fila,'fechatermino'),
-                      'celda-corregida-pulso': filasCorregidasRecientes.has(fila.numero_fila_excel)
-                    }">
-                    <div class="d-flex align-items-center gap-1 flex-wrap">
-                      <span class="fecha-chip">{{ fila.fechainicio || '—' }}</span>
-                      <i class="bi bi-arrow-right fecha-sep"></i>
-                      <span class="fecha-chip">{{ fila.fechatermino || '—' }}</span>
-                      <i v-if="filaTieneError(fila,'fechas') || filaTieneError(fila,'fechainicio') || filaTieneError(fila,'fechatermino')" class="bi bi-exclamation-triangle-fill text-danger ms-1"></i>
+                  <!-- Fechas -->
+                  <td class="col-fechas">
+                    <div class="fechas-bloque"
+                      :class="{
+                        'celda-error': filaTieneError(fila,'fechas') || filaTieneError(fila,'fechainicio') || filaTieneError(fila,'fechatermino'),
+                        'celda-corregida-pulso': filasCorregidasRecientes.has(fila.numero_fila_excel)
+                      }">
+                      <div class="d-flex align-items-center gap-1 flex-wrap">
+                        <span class="fecha-chip">{{ fila.fechainicio || '—' }}</span>
+                        <i class="bi bi-arrow-right fecha-sep"></i>
+                        <span class="fecha-chip">{{ fila.fechatermino || '—' }}</span>
+                        <i v-if="filaTieneError(fila,'fechas') || filaTieneError(fila,'fechainicio') || filaTieneError(fila,'fechatermino')" class="bi bi-exclamation-triangle-fill text-danger ms-1"></i>
+                      </div>
+                      <div v-if="etapaActual === 1 && (filaTieneError(fila,'fechas') || filaTieneError(fila,'fechainicio') || filaTieneError(fila,'fechatermino'))" class="sugerencia-inline mt-1">
+                        <i class="bi bi-lightbulb-fill text-warning"></i>
+                        <span>Fechas observadas</span>
+                        <button class="btn-corregir-inline" @click="abrirModalFechas(fila)">
+                          Corregir
+                        </button>
+                      </div>
                     </div>
-                    <div v-if="etapaActual === 1 && (filaTieneError(fila,'fechas') || filaTieneError(fila,'fechainicio') || filaTieneError(fila,'fechatermino'))" class="sugerencia-inline mt-1">
-                      <i class="bi bi-lightbulb-fill text-warning"></i>
-                      <span>Fechas observadas</span>
-                      <button class="btn-corregir-inline" @click="abrirModalFechas(fila)">
-                        Corregir
-                      </button>
+                  </td>
+
+                  <!-- Vehículo / Sigla -->
+                  <td class="col-vehiculo">
+                    <div class="vehiculo-bloque" :class="{ 'celda-corregida-pulso': filasCorregidasRecientes.has(fila.numero_fila_excel) }">
+                      <span class="badge-sigla" :class="{ 'badge-sigla--error': filaTieneError(fila,'sigla') }">
+                        {{ fila.sigla || '—' }}
+                        <i v-if="filaTieneError(fila,'sigla')" class="bi bi-exclamation-triangle-fill ms-1"></i>
+                      </span>
+                      <!-- Sugerencia inline de sigla -->
+                      <div v-if="!fila.sigla_valida && fila.sugerencia_correccion_sigla" class="sugerencia-inline">
+                        <i class="bi bi-lightbulb-fill text-warning"></i>
+                        <span>¿{{ fila.sugerencia_correccion_sigla }}?</span>
+                        <button class="btn-corregir-inline"
+                          @click="corregirFilaDirectamente({ campo:'sigla', sugerencia: fila.sugerencia_correccion_sigla, fila_ref: fila })">
+                          Corregir
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                </td>
+                  </td>
 
-                <!-- Vehículo / Sigla -->
-                <td class="col-vehiculo">
-                  <div class="vehiculo-bloque" :class="{ 'celda-corregida-pulso': filasCorregidasRecientes.has(fila.numero_fila_excel) }">
-                    <span class="badge-sigla" :class="{ 'badge-sigla--error': filaTieneError(fila,'sigla') }">
-                      {{ fila.sigla || '—' }}
-                      <i v-if="filaTieneError(fila,'sigla')" class="bi bi-exclamation-triangle-fill ms-1"></i>
-                    </span>
-                    <!-- Sugerencia inline de sigla -->
-                    <div v-if="!fila.sigla_valida && fila.sugerencia_correccion_sigla" class="sugerencia-inline">
-                      <i class="bi bi-lightbulb-fill text-warning"></i>
-                      <span>¿{{ fila.sugerencia_correccion_sigla }}?</span>
-                      <button class="btn-corregir-inline"
-                        @click="corregirFilaDirectamente({ campo:'sigla', sugerencia: fila.sugerencia_correccion_sigla, fila_ref: fila })">
-                        Corregir
-                      </button>
+                  <!-- Días de salida (chips abreviados) -->
+                  <td class="col-dias">
+                    <div class="dias-chips" :class="{ 'celda-corregida-pulso': filasCorregidasRecientes.has(fila.numero_fila_excel) }">
+                      <span
+                        v-for="chip in chipsDias(fila.dias_salida)"
+                        :key="chip"
+                        class="dia-chip"
+                      >{{ chip }}</span>
+                      <span v-if="chipsDias(fila.dias_salida).length === 0" class="text-muted">—</span>
                     </div>
-                  </div>
-                </td>
+                  </td>
 
-                <!-- Días de salida (chips abreviados) -->
-                <td class="col-dias">
-                  <div class="dias-chips" :class="{ 'celda-corregida-pulso': filasCorregidasRecientes.has(fila.numero_fila_excel) }">
-                    <span
-                      v-for="chip in chipsDias(fila.dias_salida)"
-                      :key="chip"
-                      class="dia-chip"
-                    >{{ chip }}</span>
-                    <span v-if="chipsDias(fila.dias_salida).length === 0" class="text-muted">—</span>
-                  </div>
-                </td>
-
-                <!-- Viáticos -->
-                <td class="col-viaticos">
-                  <div class="viaticos-bloque"
-                    :class="{
-                      'celda-error': filaTieneError(fila,'viaticos') || filaTieneError(fila,'dias_salida'),
-                      'celda-corregida-pulso': filasCorregidasRecientes.has(fila.numero_fila_excel)
-                    }">
-                    <span class="viaticos-dias">
-                      {{ contarDiasSalida(fila.dias_salida) }} día(s)
-                      <i v-if="filaTieneError(fila,'viaticos') || filaTieneError(fila,'dias_salida')" class="bi bi-exclamation-triangle-fill text-danger ms-1"></i>
-                    </span>
-                    <span class="viaticos-detalle">{{ resumenViaticos(fila) }}</span>
-                    <!-- Corrección de Días y Viáticos -->
-                    <div v-if="etapaActual === 1 && (filaTieneError(fila,'viaticos') || filaTieneError(fila,'dias_salida'))" class="sugerencia-inline mt-1">
-                      <i class="bi bi-lightbulb-fill text-warning"></i>
-                      <span>Suma {{ sumarViaticos(fila) }} vs {{ contarDiasSalida(fila.dias_salida) }}d</span>
-                      <button class="btn-corregir-inline" @click="abrirModalViaticos(fila)">
-                        Corregir
-                      </button>
+                  <!-- Viáticos -->
+                  <td class="col-viaticos">
+                    <div class="viaticos-bloque"
+                      :class="{
+                        'celda-error': filaTieneError(fila,'viaticos') || filaTieneError(fila,'dias_salida'),
+                        'celda-corregida-pulso': filasCorregidasRecientes.has(fila.numero_fila_excel)
+                      }">
+                      <span class="viaticos-dias">
+                        {{ contarDiasSalida(fila.dias_salida) }} día(s)
+                        <i v-if="filaTieneError(fila,'viaticos') || filaTieneError(fila,'dias_salida')" class="bi bi-exclamation-triangle-fill text-danger ms-1"></i>
+                      </span>
+                      <span class="viaticos-detalle">{{ resumenViaticos(fila) }}</span>
+                      <!-- Corrección de Días y Viáticos -->
+                      <div v-if="etapaActual === 1 && (filaTieneError(fila,'viaticos') || filaTieneError(fila,'dias_salida'))" class="sugerencia-inline mt-1">
+                        <i class="bi bi-lightbulb-fill text-warning"></i>
+                        <span>Suma {{ sumarViaticos(fila) }} vs {{ contarDiasSalida(fila.dias_salida) }}d</span>
+                        <button class="btn-corregir-inline" @click="abrirModalViaticos(fila)">
+                          Corregir
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                </td>
+                  </td>
 
-                <!-- Estado de la fila -->
-                <td class="col-estado">
-                  <!-- En Etapa 1: muestra errores de validación -->
-                  <template v-if="etapaActual === 1">
-                    <span v-if="erroresDeFila(fila).length === 0" class="badge-estado badge-estado--ok">
-                      <i class="bi bi-check-circle-fill"></i>Válido
-                    </span>
-                    <span v-else class="badge-estado badge-estado--error">
-                      <i class="bi bi-exclamation-circle-fill"></i>
-                      {{ erroresDeFila(fila).length }} obs.
-                    </span>
-                  </template>
-                  <!-- En Etapa 2: muestra estado de ejecución con micro-tiempo y acceso a error -->
-                  <template v-else-if="etapaActual === 2">
-                    <span v-if="colorFilaEjecucion(idx) === 'fila-completado'" class="badge-estado badge-estado--ok">
-                      <i class="bi bi-check-circle-fill"></i>Listo
-                      <span v-if="tiempoCometidoTexto(idx)" class="badge-tiempo-txt">· {{ tiempoCometidoTexto(idx) }}</span>
-                    </span>
-                    <span v-else-if="colorFilaEjecucion(idx) === 'fila-ejecutando'" class="badge-estado badge-estado--ejecutando">
-                      <span class="spinner-border spinner-border-sm me-1" style="width:12px;height:12px"></span>
-                      En curso
-                      <span v-if="tiempoCometidoTexto(idx)" class="badge-tiempo-txt">({{ tiempoCometidoTexto(idx) }})</span>
-                    </span>
-                    <div v-else-if="colorFilaEjecucion(idx) === 'fila-fallido'" class="estado-fallido-bloque">
-                      <span class="badge-estado badge-estado--error">
-                        <i class="bi bi-x-circle-fill"></i>Error
+                  <!-- Estado de la fila -->
+                  <td class="col-estado">
+                    <!-- En Etapa 1: muestra errores de validación -->
+                    <template v-if="etapaActual === 1">
+                      <span v-if="erroresDeFila(fila).length === 0" class="badge-estado badge-estado--ok">
+                        <i class="bi bi-check-circle-fill"></i>Válido
+                      </span>
+                      <div v-else class="estado-observado-bloque">
+                        <span
+                          class="badge-estado badge-estado--error"
+                          :title="camposNoEditablesFaltantes(fila).length > 0 ? `Falta en Excel: ${camposNoEditablesFaltantes(fila).join(', ')}` : 'Fila con observaciones'"
+                        >
+                          <i class="bi bi-exclamation-circle-fill"></i>
+                          {{ erroresDeFila(fila).length }} obs.
+                        </span>
+                        <div
+                          v-if="camposNoEditablesFaltantes(fila).length > 0"
+                          class="faltantes-excel-alerta"
+                          :title="`Dato(s) obligatorio(s) vacío(s) en el Excel: ${camposNoEditablesFaltantes(fila).join(', ')}`"
+                        >
+                          <i class="bi bi-exclamation-diamond-fill me-1"></i>
+                          <span>Falta: {{ camposNoEditablesFaltantes(fila).join(', ') }}</span>
+                        </div>
+                      </div>
+                    </template>
+                    <!-- En Etapa 2: muestra estado de ejecución con micro-tiempo y acceso a seguimiento o error -->
+                    <template v-else-if="etapaActual === 2">
+                      <span v-if="colorFilaEjecucion(idx) === 'fila-completado'" class="badge-estado badge-estado--ok">
+                        <i class="bi bi-check-circle-fill"></i>Listo
                         <span v-if="tiempoCometidoTexto(idx)" class="badge-tiempo-txt">· {{ tiempoCometidoTexto(idx) }}</span>
                       </span>
-                      <button
-                        class="btn-ver-error-fila"
-                        @click.stop="inspeccionarErrorFila(idx)"
-                        title="Ver detalle del error"
-                      >
-                        <i class="bi bi-eye-fill me-1"></i>Ver detalle
-                      </button>
+                      <div v-else-if="colorFilaEjecucion(idx) === 'fila-ejecutando'" class="estado-ejecutando-bloque">
+                        <span class="badge-estado badge-estado--ejecutando">
+                          <span class="spinner-border spinner-border-sm me-1" style="width:12px;height:12px"></span>
+                          En curso
+                          <span v-if="tiempoCometidoTexto(idx)" class="badge-tiempo-txt">({{ tiempoCometidoTexto(idx) }})</span>
+                        </span>
+                        <button
+                          class="btn-seguir-paso-fila"
+                          :class="{ 'btn-seguir-paso-fila--activo': indiceSiguiendoPaso === idx }"
+                          @click.stop="alternarSeguirPaso(idx)"
+                          title="Seguir paso en vivo"
+                        >
+                          <i class="bi bi-broadcast me-1"></i>Seguir paso
+                        </button>
+                      </div>
+                      <div v-else-if="colorFilaEjecucion(idx) === 'fila-fallido'" class="estado-fallido-bloque">
+                        <span class="badge-estado badge-estado--error">
+                          <i class="bi bi-x-circle-fill"></i>Error
+                          <span v-if="tiempoCometidoTexto(idx)" class="badge-tiempo-txt">· {{ tiempoCometidoTexto(idx) }}</span>
+                        </span>
+                        <button
+                          class="btn-ver-error-fila"
+                          @click.stop="inspeccionarErrorFila(idx)"
+                          title="Ver detalle del error"
+                        >
+                          <i class="bi bi-eye-fill me-1"></i>Ver detalle
+                        </button>
+                      </div>
+                      <span v-else class="badge-estado badge-estado--pendiente">
+                        <i class="bi bi-clock"></i>Pendiente
+                      </span>
+                    </template>
+                  </td>
+                </tr>
+
+                <!-- Fila desplegable en vivo (Acordeón de seguimiento del cometido en curso) -->
+                <tr
+                  v-if="etapaActual === 2 && indiceSiguiendoPaso === idx && colorFilaEjecucion(idx) === 'fila-ejecutando'"
+                  class="fila-seguimiento-vivo"
+                >
+                  <td colspan="7" class="celda-seguimiento-vivo">
+                    <div class="panel-seguimiento-vivo">
+                      <div class="seguimiento-cabecera">
+                        <div class="seguimiento-titulo-izq">
+                          <span class="pulso-transmision">
+                            <i class="bi bi-broadcast"></i>
+                          </span>
+                          <span class="seguimiento-titulo-txt">
+                            Seguimiento en vivo — Cometido N°{{ fila.numero_cometido || (idx + 1) }} (RUT {{ formatearRut(fila.rut) }})
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          class="btn-cerrar-seguimiento"
+                          @click="indiceSiguiendoPaso = null"
+                          title="Ocultar seguimiento"
+                        >
+                          <i class="bi bi-chevron-up me-1"></i>Ocultar
+                        </button>
+                      </div>
+
+                      <!-- 3 Bloques Horizontales de los Portales -->
+                      <div class="portales-vivo-grid">
+                        <div
+                          v-for="portalItem in subPasos"
+                          :key="portalItem.id"
+                          class="portal-vivo-card"
+                          :class="{
+                            'portal-vivo--completado': pasoPortalCometido(idx) > portalItem.id,
+                            'portal-vivo--activo':     pasoPortalCometido(idx) === portalItem.id,
+                            'portal-vivo--pendiente':  pasoPortalCometido(idx) < portalItem.id,
+                          }"
+                        >
+                          <div class="portal-vivo-top">
+                            <div class="portal-vivo-icono">
+                              <i v-if="pasoPortalCometido(idx) > portalItem.id" class="bi bi-check-circle-fill"></i>
+                              <span
+                                v-else-if="pasoPortalCometido(idx) === portalItem.id"
+                                class="spinner-border spinner-border-sm"
+                              ></span>
+                              <i v-else :class="`bi ${portalItem.icono}`"></i>
+                            </div>
+                            <span class="portal-vivo-nombre">{{ portalItem.label }}</span>
+                            <span v-if="pasoPortalCometido(idx) > portalItem.id" class="portal-vivo-tag tag-completado">
+                              Completado
+                            </span>
+                            <span v-else-if="pasoPortalCometido(idx) === portalItem.id" class="portal-vivo-tag tag-activo">
+                              En proceso
+                            </span>
+                            <span v-else class="portal-vivo-tag tag-espera">
+                              En espera
+                            </span>
+                          </div>
+
+                          <div class="portal-vivo-cuerpo">
+                            <template v-if="pasoPortalCometido(idx) > portalItem.id">
+                              <span class="texto-paso-completado">
+                                <i class="bi bi-check2 me-1"></i>Etapa finalizada correctamente
+                              </span>
+                            </template>
+                            <template v-else-if="pasoPortalCometido(idx) === portalItem.id">
+                              <div class="accion-viva-caja">
+                                <span class="accion-viva-etiqueta">Acción actual del robot:</span>
+                                <span class="accion-viva-detalle">{{ obtenerDetalleVivoCometido(idx) }}</span>
+                              </div>
+                            </template>
+                            <template v-else>
+                              <span class="texto-paso-espera">
+                                Pendiente de ejecución
+                              </span>
+                            </template>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                    <span v-else class="badge-estado badge-estado--pendiente">
-                      <i class="bi bi-clock"></i>Pendiente
-                    </span>
-                  </template>
-                </td>
-              </tr>
+                  </td>
+                </tr>
+              </template>
             </tbody>
           </table>
         </div>
@@ -2609,296 +2403,7 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
   border-bottom: 1px solid rgba(255,255,255,0.08);
 }
 
-/* Botón Terminal (esquina derecha del stepper principal) */
-.btn-terminal-icono {
-  position: absolute;
-  right: 28px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
-  border: 2px solid #38bdf8;
-  background: linear-gradient(135deg, rgba(14, 165, 233, 0.22), rgba(15, 23, 42, 0.9));
-  color: #38bdf8;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 22px;
-  cursor: pointer;
-  box-shadow: 0 0 16px rgba(56, 189, 248, 0.35);
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  z-index: 10;
-}
-
-.btn-terminal-icono:hover {
-  background: linear-gradient(135deg, rgba(14, 165, 233, 0.35), rgba(15, 23, 42, 0.95));
-  border-color: #7dd3fc;
-  color: #ffffff;
-  transform: translateY(-50%) scale(1.08);
-  box-shadow: 0 0 24px rgba(56, 189, 248, 0.6);
-}
-
-.btn-terminal-activo {
-  background: #0284c7 !important;
-  border-color: #38bdf8 !important;
-  color: #ffffff !important;
-  box-shadow: 0 0 22px rgba(56, 189, 248, 0.7) !important;
-}
-
-.btn-terminal--error {
-  border-color: #ef4444 !important;
-  color: #f87171 !important;
-  box-shadow: 0 0 18px rgba(239, 68, 68, 0.5) !important;
-}
-
-/* Indicadores de pulso y alerta en el botón */
-.terminal-dot-pulso {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 10px;
-  height: 10px;
-  background-color: #38bdf8;
-  border: 2px solid #0f172a;
-  border-radius: 50%;
-  animation: pulseCyan 1.5s infinite;
-}
-
-@keyframes pulseCyan {
-  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7); }
-  70% { transform: scale(1.1); box-shadow: 0 0 0 6px rgba(56, 189, 248, 0); }
-  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
-}
-
-.terminal-dot-alerta {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 11px;
-  height: 11px;
-  background-color: #ef4444;
-  border: 2px solid #0f172a;
-  border-radius: 50%;
-  animation: pulseRed 1.2s infinite;
-}
-
-@keyframes pulseRed {
-  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.8); }
-  70% { transform: scale(1.15); box-shadow: 0 0 0 7px rgba(239, 68, 68, 0); }
-  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
-}
-
-/* Modal / Drawer Terminal de Procesos */
-.terminal-drawer {
-  position: absolute;
-  top: 82px;
-  right: 28px;
-  width: 780px;
-  max-width: calc(100vw - 56px);
-  max-height: 540px;
-  background-color: #080e1e;
-  border: 1px solid #1e293b;
-  border-radius: 12px;
-  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.6);
-  z-index: 100;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  animation: fadeInDown 0.2s ease-out;
-}
-
-@keyframes fadeInDown {
-  from { opacity: 0; transform: translateY(-8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.terminal-drawer-header {
-  background-color: #0f172a;
-  color: #f8fafc;
-  padding: 11px 18px;
-  font-size: 13px;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.btn-terminal-accion {
-  background: transparent;
-  border: none;
-  color: #94a3b8;
-  font-size: 13px;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 5px;
-  transition: all 0.15s;
-}
-
-.btn-terminal-accion:hover {
-  color: #38bdf8;
-  background-color: rgba(56, 189, 248, 0.15);
-}
-
-.btn-cerrar-terminal {
-  background: transparent;
-  border: none;
-  color: #94a3b8;
-  font-size: 13px;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 5px;
-  transition: all 0.15s;
-}
-
-.btn-cerrar-terminal:hover {
-  color: #fff;
-  background-color: rgba(239, 68, 68, 0.3);
-}
-
-.terminal-badge {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 12px;
-  background-color: #334155;
-  color: #cbd5e1;
-}
-
-.badge-activa {
-  background-color: rgba(0, 111, 179, 0.4);
-  color: #60a5fa;
-  border: 1px solid #3b82f6;
-}
-
-.badge-fin {
-  background-color: rgba(5, 150, 105, 0.3);
-  color: #34d399;
-  border: 1px solid #059669;
-}
-
-.badge-error {
-  background-color: rgba(220, 38, 38, 0.35);
-  color: #fca5a5;
-  border: 1px solid #dc2626;
-}
-
-.terminal-drawer-cuerpo {
-  padding: 16px 20px;
-  overflow-y: auto;
-  font-family: 'Consolas', 'Courier New', Courier, monospace;
-  font-size: 12.5px;
-  min-height: 220px;
-  max-height: 420px;
-  background-color: #070d1e;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-/* Scrollbar estilizada */
-.terminal-drawer-cuerpo::-webkit-scrollbar {
-  width: 8px;
-}
-.terminal-drawer-cuerpo::-webkit-scrollbar-track {
-  background: #080e1e;
-}
-.terminal-drawer-cuerpo::-webkit-scrollbar-thumb {
-  background: #1e293b;
-  border-radius: 4px;
-}
-.terminal-drawer-cuerpo::-webkit-scrollbar-thumb:hover {
-  background: #334155;
-}
-
-/* Estado sin logs */
-.consola-vacia {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 40px 20px;
-  color: #94a3b8;
-  text-align: center;
-  font-size: 12.5px;
-}
-
-/* Línea de log estándar */
-.consola-linea {
-  color: #cbd5e1;
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  font-size: 12.5px;
-  line-height: 1.45;
-  word-break: break-word;
-}
-
-.consola-hora {
-  color: #64748b;
-  font-size: 11px;
-  font-family: monospace;
-  flex-shrink: 0;
-}
-
-.consola-prefijo {
-  color: #38bdf8;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-
-.consola-texto {
-  color: #e2e8f0;
-}
-
-.consola-linea--activo {
-  color: #38bdf8;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
-
-.cursor-blink {
-  animation: blink 1s step-end infinite;
-  color: #38bdf8;
-  font-weight: bold;
-}
-
-/* Banner de inicio de cometido */
-.consola-banner-inicio {
-  background: rgba(56, 189, 248, 0.1);
-  border-left: 3px solid #38bdf8;
-  padding: 8px 12px;
-  border-radius: 4px;
-  color: #7dd3fc;
-  font-weight: 600;
-  font-size: 12.5px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-/* Checkpoint de cometido exitoso */
-.consola-card-exito {
-  background: rgba(34, 197, 94, 0.12);
-  border-left: 3px solid #22c55e;
-  border-radius: 4px;
-  padding: 8px 12px;
-  color: #86efac;
-  font-weight: 600;
-  font-size: 12.5px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-/* Checkpoint de error con output de Python */
+/* Tarjeta de detalle de error (Modal Ver Detalle de fila) */
 .consola-card-error {
   background-color: #170d14;
   border: 1px solid #ef4444;
@@ -2953,45 +2458,6 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
   font-weight: 600;
 }
 
-.error-selector-code {
-  background-color: #261624;
-  color: #f472b6;
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 11.5px;
-  font-family: monospace;
-  border: 1px solid rgba(244, 114, 182, 0.3);
-}
-
-/* Card Python Output */
-.card-error-python {
-  margin-top: 4px;
-  background: #0b1120;
-  border: 1px solid #1e293b;
-  border-radius: 6px;
-  padding: 8px 12px;
-}
-
-.python-header {
-  font-size: 11px;
-  font-weight: 700;
-  color: #38bdf8;
-  margin-bottom: 4px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.python-code {
-  margin: 0;
-  font-size: 11.5px;
-  color: #e2e8f0;
-  white-space: pre-wrap;
-  word-break: break-all;
-  font-family: 'Consolas', monospace;
-  line-height: 1.45;
-}
-
 .card-error-footer {
   font-size: 11.5px;
   color: #fef08a;
@@ -3001,84 +2467,6 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
   border: 1px dashed rgba(234, 179, 8, 0.35);
   display: flex;
   align-items: center;
-}
-
-.card-error-footer code {
-  color: #fde047;
-  background: rgba(0,0,0,0.3);
-  padding: 1px 4px;
-  border-radius: 3px;
-  margin: 0 4px;
-}
-
-/* Animación de checkpoint resaltado al inspeccionar error desde la fila */
-.consola-card-error--resaltado {
-  animation: highlightError 1.8s ease-in-out;
-}
-
-@keyframes highlightError {
-  0% {
-    transform: scale(1.02);
-    box-shadow: 0 0 25px rgba(239, 68, 68, 0.95);
-    border-color: #f87171;
-  }
-  50% {
-    transform: scale(1.02);
-    box-shadow: 0 0 32px rgba(239, 68, 68, 1);
-    border-color: #ef4444;
-  }
-  100% {
-    transform: scale(1);
-    box-shadow: 0 4px 18px rgba(239, 68, 68, 0.2);
-  }
-}
-
-/* Card de Resumen */
-.consola-card-resumen {
-  background: #0f172a;
-  border: 1px solid #38bdf8;
-  border-radius: 8px;
-  padding: 12px 16px;
-  margin: 8px 0;
-  color: #f8fafc;
-}
-
-.resumen-titulo {
-  font-weight: 700;
-  font-size: 13px;
-  color: #38bdf8;
-  margin-bottom: 10px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.resumen-estadisticas {
-  display: flex;
-  gap: 20px;
-}
-
-.resumen-kpi {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  background: #1e293b;
-  padding: 6px 14px;
-  border-radius: 6px;
-  min-width: 80px;
-}
-
-.kpi-num {
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 1.2;
-}
-
-.kpi-etiqueta {
-  font-size: 11px;
-  color: #94a3b8;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 
 .stepper-inner {
@@ -3679,11 +3067,245 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
   font-weight: 500;
 }
 
-.estado-fallido-bloque {
+.estado-fallido-bloque,
+.estado-ejecutando-bloque,
+.estado-observado-bloque {
   display: inline-flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
+}
+
+.faltantes-excel-alerta {
+  display: inline-flex;
+  align-items: center;
+  max-width: 175px;
+  background-color: #fff1f2;
+  border: 1px solid #fecdd3;
+  color: #be123c;
+  border-radius: 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 6px;
+  line-height: 1.25;
+  text-align: left;
+  cursor: help;
+}
+
+.faltantes-excel-alerta i {
+  flex-shrink: 0;
+  color: #e11d48;
+}
+
+.btn-seguir-paso-fila {
+  background-color: #e0f2fe;
+  border: 1px solid #7dd3fc;
+  color: #0369a1;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 7px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 122px;
+  box-sizing: border-box;
+  transition: all 0.2s ease;
+}
+
+.btn-seguir-paso-fila:hover {
+  background-color: #bae6fd;
+  color: #0c4a6e;
+  transform: translateY(-1px);
+}
+
+.btn-seguir-paso-fila--activo {
+  background-color: #0284c7;
+  border-color: #0284c7;
+  color: #ffffff;
+}
+
+.btn-seguir-paso-fila--activo:hover {
+  background-color: #0369a1;
+  color: #ffffff;
+}
+
+/* ── Fila desplegable de seguimiento en vivo (Acordeón de 3 portales) ── */
+.fila-seguimiento-vivo {
+  background-color: #f8fafc !important;
+}
+
+.celda-seguimiento-vivo {
+  padding: 12px 20px 16px !important;
+  text-align: left !important;
+  border-bottom: 2px solid #bae6fd !important;
+}
+
+.panel-seguimiento-vivo {
+  background-color: #ffffff;
+  border: 1px solid #bae6fd;
+  border-left: 4px solid #0284c7;
+  border-radius: 10px;
+  padding: 14px 18px;
+  box-shadow: 0 4px 14px rgba(2, 132, 199, 0.08);
+}
+
+.seguimiento-cabecera {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.seguimiento-titulo-izq {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pulso-transmision {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background-color: #e0f2fe;
+  color: #0284c7;
+  font-size: 13px;
+}
+
+.seguimiento-titulo-txt {
+  font-family: var(--font-title);
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.btn-cerrar-seguimiento {
+  background: transparent;
+  border: 1px solid #cbd5e1;
+  color: #475569;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-cerrar-seguimiento:hover {
+  background-color: #f1f5f9;
+  color: #0f172a;
+}
+
+.portales-vivo-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.portal-vivo-card {
+  border-radius: 8px;
+  padding: 10px 14px;
+  border: 1px solid #e2e8f0;
+  background-color: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: all 0.25s ease;
+}
+
+.portal-vivo--completado {
+  background-color: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.portal-vivo--activo {
+  background-color: #f0f9ff;
+  border: 1.5px solid #38bdf8;
+  box-shadow: 0 2px 10px rgba(2, 132, 199, 0.1);
+}
+
+.portal-vivo--pendiente {
+  background-color: #f8fafc;
+  border-color: #e2e8f0;
+  opacity: 0.75;
+}
+
+.portal-vivo-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.portal-vivo-icono {
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+}
+
+.portal-vivo--completado .portal-vivo-icono { color: #16a34a; }
+.portal-vivo--activo .portal-vivo-icono     { color: #0284c7; }
+.portal-vivo--pendiente .portal-vivo-icono  { color: #64748b; }
+
+.portal-vivo-nombre {
+  font-weight: 700;
+  font-size: 13px;
+  color: #0f172a;
+  flex: 1;
+}
+
+.portal-vivo-tag {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+.tag-completado { background-color: #dcfce7; color: #15803d; }
+.tag-activo     { background-color: #0284c7; color: #ffffff; }
+.tag-espera     { background-color: #e2e8f0; color: #64748b; }
+
+.portal-vivo-cuerpo {
+  font-size: 12.5px;
+}
+
+.texto-paso-completado {
+  color: #15803d;
+  font-weight: 600;
+}
+
+.texto-paso-espera {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.accion-viva-caja {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background-color: #ffffff;
+  border: 1px solid #bae6fd;
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+.accion-viva-etiqueta {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: #0284c7;
+}
+
+.accion-viva-detalle {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #0f172a;
 }
 
 .btn-ver-error-fila {
